@@ -216,7 +216,7 @@ syn_file <- File(file.path("data", "Model_AD_merged_metadata.csv"),
 all_syn_ids <- c(metadata_list$Metadata_Assay,
                  metadata_list$Metadata_Biospecimen,
                  metadata_list$Metadata_Individual)
-github_link <- "https://github.com/jaclynbeck-sage/MODEL-AD_RNAseq_Harmonization/blob/main/Harmonize_Metadata.R"
+github_link <- "https://github.com/jaclynbeck-sage/MODEL-AD_RNAseq_Harmonization/blob/main/01_Harmonize_Metadata.R"
 
 synStore(syn_file,
          used = all_syn_ids,
