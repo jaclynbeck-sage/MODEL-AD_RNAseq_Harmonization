@@ -83,13 +83,6 @@ metadata <- lapply(1:nrow(metadata_list), function(N) {
                            sequencingBatch = NA)
   }
 
-  # UCI_3xTg-AD and UCI_5XFAD: some capitalization differences in the individual
-  # metadata file
-  if (row$Study %in% c("UCI_3xTg-AD", "UCI_5XFAD")) {
-    individual_df$stockNumber <- individual_df$StockNumber
-    individual_df$officialName <- individual_df$OfficialName
-  }
-
   # UCI_5XFAD: The specimen IDs in the assay metadata do not match what is in
   # the biospecimen metadata, so we need to fix them. In the assay metadata
   # they are of the format "<individualID>(H or C)_RNAseq", (e.g. "295C_RNAseq")
@@ -112,7 +105,7 @@ metadata <- lapply(1:nrow(metadata_list), function(N) {
     biospec_df$samplingAge <- NA
   }
 
-  # Studies UCI_ABCA7, UCI_PrimaryScreen, UCI_Trem2_Cuprizone, and
+  # Studies UCI_3xTg-AD, UCI_ABCA7, UCI_PrimaryScreen, UCI_Trem2_Cuprizone, and
   # UCI_Trem2-R47H_NSS need no corrections in this section
 
 
@@ -136,8 +129,7 @@ metadata <- lapply(1:nrow(metadata_list), function(N) {
   combined_df <- select(combined_df, individualID, specimenID, platform, RIN,
                         rnaBatch, libraryBatch, sequencingBatch, organ, tissue,
                         samplingAge, sex, ageDeath, ageDeathUnits, genotype,
-                        genotypeBackground, stockNumber, officialName,
-                        modelSystemName, study_name) %>%
+                        genotypeBackground, modelSystemName, study_name) %>%
                   distinct()
   return(combined_df)
 })
