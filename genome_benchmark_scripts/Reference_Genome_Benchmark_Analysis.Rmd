@@ -1,0 +1,563 @@
+---
+title: "Reference Genome Benchmark Analysis"
+output:
+  html_document:
+    df_print: paged
+  html_notebook: default
+  pdf_document: default
+---
+
+I created a custom reference genome by adding human genes (APOE, APP, MAPT, and PSEN1)
+to the mouse reference genome from Ensembl (GRCm39.112), which covers all 
+humanized genes in the 3xTg, 5XFAD, and LOAD1 mice. I chose 5-6 female mouse 
+samples per genotype (using both carriers and noncarriers) from 3 studies: 
+Jax.IU.Pitt_5XFAD, Jax.IU.Pitt_APOE4.Trem2.R47H (LOAD1), and UCI_3xTg-AD. I 
+attempted to choose samples that were approximately 12 months old, with variation 
+based on sample availability: 
+
+* Jax.IU.Pitt_5XFAD: 11 months
+* Jax.IU.Pitt_APOE4.Trem2.R47H (LOAD1): 13-16 months
+  * except for APOE4 noncarriers, which only had 3-4 month old samples available
+* UCI_3xTg-AD: 12 months
+
+I sequenced all samples with Jared's NextFlow setup using the base mouse genome,
+and sequenced them again using the custom (universal) reference genome, then 
+compared the resulting count matrices between the two sequencing runs. 
+Theoretically, all counts for all mouse genes should be approximately the same 
+between the two runs, and counts for humanized genes should only be detected in 
+samples carrying that transgene. 
+
+We can expect a small amount of erroneous detection of humanized genes in non-
+carriers due to sequence similarity between the human gene and the mouse gene,
+especially for APP and PSEN1 (source: Ensembl ortholog data):
+
+* APOE: 70.66% sequence similarity between human and mouse gene
+* APP: 96.62% sequence similarity
+* MAPT: 65.55% sequence similarity
+* PSEN1: 92.72% sequence similarity
+
+# Setup
+
+**Read in metadata and processed counts files. Subset metadata to only the samples
+present in the counts files.**
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+
+library(stringr)
+library(dplyr)
+library(reshape2)
+library(ggplot2)
+library(RColorBrewer)
+library(synapser)
+
+setwd("..")
+
+synLogin()
+meta_file <- synGet("syn61850266", downloadLocation = file.path("data", "tmp"))
+metadata <- read.csv(file.path("data", "tmp", "Model_AD_merged_metadata.csv"))
+
+# Necessary because R puts an "X" in front of any specimen IDs that start with
+# a number to make column names
+metadata$specimenID_X <- make.names(metadata$specimenID)
+
+counts_base <- read.table(file.path("data", "tmp", 
+                                    "rsem.merged.gene_counts_base_genome.tsv"),
+                          sep = "\t", header = TRUE) %>%
+  select(-transcript_id.s.)
+
+counts_univ <- read.table(file.path("data", "tmp", 
+                                    "rsem.merged.gene_counts_universal_genome.tsv"),
+                          sep = "\t", header = TRUE) %>%
+  select(-transcript_id.s.)
+
+metadata <- subset(metadata, specimenID_X %in% colnames(counts_base)) %>%
+  select(individualID, specimenID, specimenID_X, genotype, study_name)
+```
+
+# Quality checks
+
+```{r}
+human_genes <- setdiff(counts_univ$gene_id, counts_base$gene_id)
+mouse_genes <- intersect(counts_base$gene_id, counts_univ$gene_id)
+
+print(paste("Quality check:", 
+            "Genes present in universal genome that are not in base genome:",
+            paste(human_genes, collapse = ", ")))
+```
+
+**All human genes should start with "ENSG", and all mouse genes should start 
+with "ENSM".**
+
+```{r}
+stopifnot(all(str_detect(human_genes, "ENSG")))
+print("Quality check: All human genes start with 'ENSG'.")
+stopifnot(all(str_detect(mouse_genes, "ENSM")))
+print("Quality check: All mouse genes start with 'ENSM'")
+```
+
+**There should be no genes in `counts_base` that don't exist in `counts_univ`.**
+
+```{r}
+stopifnot(length(setdiff(counts_base$gene_id, counts_univ$gene_id)) == 0)
+print("Quality check: All genes in base genome are present in universal genome.")
+```
+
+**Check that all samples are present in both matrices.**
+
+```{r}
+stopifnot(all(colnames(counts_base) %in% colnames(counts_univ)))
+print("Quality check: All samples are present in both counts matrices.")
+```
+
+# How many counts are identical or different between matrices?
+
+**Ensure that both matrices have samples in the same order, and create data frames
+that only include mouse genes for this analysis.**
+
+```{r message=FALSE}
+rownames(counts_base) <- counts_base$gene_id
+rownames(counts_univ) <- counts_univ$gene_id
+counts_univ <- counts_univ[, colnames(counts_base)]
+
+df_base <- melt(counts_base[mouse_genes, ], 
+                variable.name = "sample", 
+                value.name = "count")
+df_univ <- melt(counts_univ[mouse_genes, ], 
+                variable.name = "sample", 
+                value.name = "count")
+```
+
+**Number of identical counts and correlation.**
+
+```{r}
+pct <- 100 * sum(df_base$count == df_univ$count) / nrow(df_base)
+print(paste("Identical counts between matrices:", 
+            sum(df_base$count == df_univ$count), 
+            "of", nrow(df_base), 
+            "(", round(pct, digits = 2), "%)"))
+
+print(paste("Correlation between matrices: R^2 =", 
+            cor(df_base$count, df_univ$count)^2))
+```
+
+**Differences in counts. RSEM returns decimal numbers when reads are ambiguous, so
+the differences are sometimes not integers. We'll consider a count difference 
+<= 1 to be trivial and ignore it in further analysis.**
+
+```{r}
+df_combined <- cbind(df_base, df_univ$count) %>%
+  dplyr::rename(count_base = "count", count_univ = "df_univ$count") %>%
+  mutate(difference = count_base - count_univ) %>%
+  merge(metadata, by.x = "sample", by.y = "specimenID_X")
+
+diff_counts <- which(df_combined$difference != 0)
+diff_counts2 <- which(abs(df_combined$difference) > 1)
+
+print(paste("Different counts between matrices:",
+            length(diff_counts), "of", nrow(df_combined), 
+            "(", round(100-pct, digits = 2), "%)"))
+print(paste(length(diff_counts2), "of", length(diff_counts), 
+            "differences are greater than 1 count."))
+```
+
+# Examining mouse gene count differences for differences > 1 count
+
+## By study
+
+```{r}
+ggplot(df_combined[diff_counts2, ], 
+       aes(x = count_base+1, y = abs(difference), color = study_name)) + 
+  geom_point(size = 0.5) + scale_x_log10() + scale_y_log10() + 
+  theme_bw() + theme(legend.position = "bottom") + 
+  scale_color_brewer(palette = "Set1", name = "Study") +
+  ggtitle("Count differences between reference genomes (for differences > 1)") + 
+  xlab("Counts (aligned with base mouse genome)") + 
+  ylab("Difference from universal genome")
+```
+## By genotype
+
+**Note that this graph appears to be dominated by the *5XFAD_carrier* genotype,
+and difference increases with total count.**
+
+```{r}
+ggplot(df_combined[diff_counts2, ], 
+       aes(x = count_base+1, y = abs(difference), color = genotype)) + 
+  geom_point(size = 0.5) + scale_x_log10() + scale_y_log10() + 
+  theme_bw() + 
+  theme(legend.position = "bottom", 
+        legend.text = element_text(size = 6)) + 
+  guides(color = guide_legend(nrow = 3, keywidth = 0.2)) + 
+  scale_color_brewer(palette = "Dark2", name = "Genotype") + 
+  ggtitle("Count differences between reference genomes (for differences > 1)") + 
+  xlab("Counts (aligned with base mouse genome)") + 
+  ylab("Difference from universal genome")
+```
+
+## How many different genes per sample?
+
+**For each sample, howmany genes have a count difference > 1 between the base 
+mouse genome and the universal genome?**
+
+```{r}
+diff_samps <- table(df_combined$specimenID[diff_counts2])
+diff_samps <- as.data.frame(diff_samps) %>%
+  rename(Sample = Var1, Genes = Freq)
+
+ggplot(diff_samps, aes(x = Genes)) + 
+  geom_histogram(bins = 20, color = "black", fill = "lightskyblue") + 
+  theme_bw() + xlab("Number of different genes") +
+  ggtitle("Histogram: Number of different genes per sample")
+```
+## How many different samples per gene?
+
+**For each gene, how many samples have a count difference > 1 between the base
+mouse genome and the universal genome?**
+
+```{r}
+diff_genes <- table(df_combined$gene_id[diff_counts2])
+diff_genes <- as.data.frame(diff_genes) %>%
+  rename(Gene = Var1, Samples = Freq)
+
+ggplot(diff_genes, aes(x = Samples)) + 
+  geom_histogram(bins = 20, color = "black", fill = "thistle") + 
+  theme_bw() + xlab("Number of different samples") +
+  ggtitle("Histogram: Number of different samples per gene")
+```
+# How many different entries per genotype?
+
+**For each genotype, how many entries in the matrix (over all samples and genes) 
+have a count difference > 1 between the base mouse genome and the universal 
+genome?**
+
+```{r}
+diff_geno <- table(df_combined$genotype[diff_counts2])
+diff_geno <- as.data.frame(diff_geno) %>%
+  rename(Genotype = Var1, Entries = Freq)
+
+ggplot(diff_geno, aes(x = Entries, y = Genotype)) + 
+  geom_col(color = "black", fill = "darkseagreen3") + 
+  theme_bw() + xlab("Matrix entries") +
+  theme(axis.text.y = element_text(size = 6)) +
+  ggtitle("Number of different matrix entries per genotype")
+```
+## How many different genes per genotype?
+
+**For each genotype, how many unique genes have a count difference > 1 in any 
+sample between the base mouse genome and the universal genome?**
+
+```{r}
+diff_geno2 <- df_combined[diff_counts2, ] %>% 
+  select(gene_id, genotype) %>%
+  distinct()
+diff_geno2 <- table(diff_geno2$genotype)
+diff_geno2 <- as.data.frame(diff_geno2) %>%
+  rename(Genotype = Var1, Genes = Freq)
+
+ggplot(diff_geno2, aes(x = Genes, y = Genotype)) + 
+  geom_col(color = "black", fill = "salmon2") + 
+  theme_bw() +
+  theme(axis.text.y = element_text(size = 6)) +
+  ggtitle("Number of unique genes changed per genotype")
+```
+# Focusing on differences of > 10 counts
+
+**Note that from the graphs above, the only entries with > 10 counts of difference
+between the base mouse genome and the universal genome are entries with between
+1,000 and 1,000,000 total counts, representing a margin of 1% to 0.001% difference.**
+
+## Which genotypes have more than a 10 count difference for any gene or sample?
+
+```{r}
+df_tmp <- subset(df_combined, abs(difference) > 10) %>%
+  group_by(genotype) %>%
+  summarize(n_differences = n())
+
+print(df_tmp)
+```
+
+## How many unique genes is this?
+
+```{r}
+df_tmp <- subset(df_combined, abs(difference) > 10) %>%
+  group_by(gene_id) %>%
+  summarize(n_differences = n())
+
+print(paste(nrow(df_tmp), "unique genes have at least one sample with a",
+            "> 10 count difference."))
+```
+
+# Examining humanized gene expression
+
+## Setup
+
+**Create a data frame with gene expression from humanized genes and mouse
+orthologs from the counts aligned with the universal genome, and the mouse 
+orthologs from the counts aligned with the base genome. Give human genes and 
+their mouse orthologs recognizable gene names.**
+
+```{r message=FALSE}
+id_map <- c("ENSMUSG00000002985" = "APOE",
+            "ENSMUSG00000022892" = "APP",
+            "ENSMUSG00000018411" = "MAPT",
+            "ENSMUSG00000019969" = "PSEN1",
+            "ENSG00000130203" = "APOE",
+            "ENSG00000142192" = "APP",
+            "ENSG00000186868" = "MAPT",
+            "ENSG00000080815" = "PSEN1")
+
+base_tmp <- melt(counts_base[names(id_map)[1:4], ],
+                 variable.name = "sample", 
+                 value.name = "count") %>%
+  mutate(gene_source = "Mouse (base)")
+
+df_human <- melt(counts_univ[names(id_map), ], 
+                 variable.name = "sample", 
+                 value.name = "count") %>%
+  mutate(gene_source = "Mouse (univ)") %>%
+  rbind(base_tmp) %>%
+  merge(metadata, by.x = "sample", by.y = "specimenID_X")
+
+df_human$gene_name <- id_map[df_human$gene_id]
+df_human$gene_source[grepl("ENSG", df_human$gene_id)] <- "Human"
+```
+
+**Mark which genotypes have which humanized genes, for plotting.**
+
+```{r}
+df_human$humanized_APOE <- df_human$genotype %in% c("APOE4-KI_homozygous", 
+                                                    "APOE4-KI_homozygous; Trem2-R47H_homozygous")
+df_human$humanized_APP <- df_human$genotype %in% c("3xTg-AD_homozygous", 
+                                                   "5XFAD_carrier")
+df_human$humanized_MAPT <- df_human$genotype %in% c("3xTg-AD_carrier")
+df_human$humanized_PSEN1 <- df_human$genotype %in% c("5XFAD_carrier")
+```
+
+## Gene expression (emphasis on humanized APOE genotypes)
+
+*APOE4_homozygous* and *APOE4_homozygous;Trem2-R47H_homozygous* mice express 
+humanized APOE. These mice were created by replacing multiple exons of the mouse
+*Apoe* gene with the human APOE sequence, so it is expected that counts of mouse
+*Apoe* would be lower in these mice. No other humanized gene was detected in 
+these mice, as expected.
+
+Some mice from the *3xTg_homozygous*, *APOE4_noncarrier*, and *Trem2-R47H_homozygous* 
+genotypes, which do **not** contain hAPOE, had a small number of detected counts 
+(< 10 counts) for humanized APOE.
+
+```{r}
+apoe_counts <- subset(df_human, gene_id == "ENSG00000130203") %>%
+  group_by(genotype) %>%
+  summarize(max_hAPOE = round(max(count)),
+            n_detected_hAPOE = sum(count > 0))
+print(apoe_counts)
+```
+
+**Expression of human genes (row 1), mouse orthologs from base mouse genome (row 2),
+and mouse orthologs from universal genome (row 3).**
+
+**The y-axis is on log10 scale but the displayed counts are the raw (linear) values.**
+
+```{r, fig.height=6}
+ggplot(df_human, aes(x = genotype, y = count+1, color = humanized_APOE)) +
+  geom_jitter(width = 0.2) + scale_y_log10() + 
+  facet_grid(rows = vars(gene_source), cols = vars(gene_name)) +
+  theme_bw() + 
+  scale_color_manual(values = c("darkgray", "cyan4"), 
+                     name = "Has humanized APOE") +
+  theme(legend.position = "bottom", 
+        axis.text.x = element_text(angle = 45, hjust = 1, size = 6)) +
+  ggtitle("Gene expression, emphasis on genotypes with hAPOE")
+```
+## Gene expression (emphasis on humanized APP genotypes)
+
+*3xTg-AD_homozygous* and *5XFAD_carrier* mice express humanized APP. hAPP was
+added to the genome with no alterations to the mouse *App* gene, so it is 
+expected that levels of mouse *App* for these mice would be comparable to 
+noncarrier genotypes. *3xTg-AD_homozygous* mice also express hMAPT but no other 
+humanized genes (with the exception of one sample expressing a trivial amount of
+hAPP as seen above), as expected. *5XFAD_carrier* mice also express hPSEN1 but no
+other humanized genes, as expected.
+
+Some mice from the *3xTg_noncarrier*, *APOE4_noncarrier*, and *5XFAD_noncarrier* 
+genotypes, which do **not** contain hAPP, had a small number of detected counts 
+(< 3 counts) for humanized APP. One 5XFAD_noncarrier sample had 533 detected 
+counts, which is much lower than the expression of 5XFAD_homozygous mice but 
+could indicate sample contamination or mis-genotyping for this sample.
+
+```{r}
+app_counts <- subset(df_human, gene_id == "ENSG00000142192") %>%
+  group_by(genotype) %>%
+  summarize(max_hAPP = round(max(count)),
+            n_detected_hAPP = sum(count > 0))
+print(app_counts)
+```
+
+```{r, fig.height=6}
+ggplot(df_human, aes(x = genotype, y = count+1, color = humanized_APP)) +
+  geom_jitter(width = 0.2) + scale_y_log10(na.value = 0) + 
+  facet_grid(rows = vars(gene_source), cols = vars(gene_name)) +
+  theme_bw() + 
+  scale_color_manual(values = c("darkgray", "deepskyblue3"),
+                     name = "Has humanized APP") +
+  theme(legend.position = "bottom", 
+        axis.text.x = element_text(angle = 45, hjust = 1, size = 6)) + 
+  ggtitle("Gene expression, emphasis on genotypes with hAPP")
+```
+## Gene expression (emphasis on humanized MAPT genotypes)
+
+No genotypes other than *3xTg-AD_homozygous* (which has hMAPT) have any detected
+counts of hMAPT, as expected. Humanized MAPT was added to the genome with no
+alterations to the mouse *Mapt* gene, so it is expected that levels of mouse 
+*Mapt* for these mice would be comparable to noncarrier genotypes.
+
+```{r}
+mapt_counts <- subset(df_human, gene_id == "ENSG00000186868") %>%
+  group_by(genotype) %>%
+  summarize(max_hMAPT = round(max(count)),
+            n_detected_hMAPT = sum(count > 0))
+print(mapt_counts)
+```
+
+```{r, fig.height=6}
+ggplot(df_human, aes(x = genotype, y = count+1, color = humanized_MAPT)) +
+  geom_jitter(width = 0.2) + scale_y_log10(na.value = 0) + 
+  facet_grid(rows = vars(gene_source), cols = vars(gene_name)) +
+  theme_bw() + 
+  scale_color_manual(values = c("darkgray", "palevioletred"),
+                     name = "Has humanized MAPT") +
+  theme(legend.position = "bottom", 
+        axis.text.x = element_text(angle = 45, hjust = 1, size = 6)) + 
+  ggtitle("Gene expression, emphasis on genotypes with hMAPT")
+```
+
+## Gene expression (emphasis on humanized PSEN1 genotypes)
+
+*5XFAD_carrier* mice express humanized PSEN1. Humanized PSEN1 was added to the 
+genome with no alterations to the mouse *Psen1* gene, so it is expected that 
+levels of mouse *Psen1* for these mice would be comparable to noncarrier genotypes.
+
+One sample of the *3xTg-AD_noncarrier* genotype expresses 1 count of hPSEN1,
+which can be considered trivial, but one sample of the *5XFAD_noncarrier* genotype expresses 40 counts of hPSEN1.
+
+```{r}
+psen1_counts <- subset(df_human, gene_id == "ENSG00000080815") %>%
+  group_by(genotype) %>%
+  summarize(max_hPSEN1 = round(max(count)),
+            n_detected_hPSEN1 = sum(count > 0))
+print(psen1_counts)
+```
+
+```{r, fig.height=6}
+ggplot(df_human, aes(x = genotype, y = count+1, color = humanized_PSEN1)) +
+  geom_jitter(width = 0.2) + scale_y_log10(na.value = 0) + 
+  facet_grid(rows = vars(gene_source), cols = vars(gene_name)) +
+  theme_bw() + 
+  scale_color_manual(values = c("darkgray", "slateblue"),
+                     name = "Has humanized PSEN1") +
+  theme(legend.position = "bottom", 
+        axis.text.x = element_text(angle = 45, hjust = 1, size = 6)) + 
+  ggtitle("Gene expression, emphasis on genotypes with hPSEN1")
+```
+**Is the *5XFAD_noncarrier* sample that expresses hPSEN1 the same as the one that
+expresses hAPP? *Yes*, it's a single sample, indicating that this sample may have
+an issue like contamination or mis-genotyping. Further comparison of other gene
+expression patterns with carriers and non-carriers would be needed to determine
+if this sample is usable in analysis.**
+
+```{r}
+bad_samples <- subset(df_human, genotype == "5XFAD_noncarrier" & 
+                        gene_id %in% c("ENSG00000080815", "ENSG00000142192") & 
+                        count > 10)
+print(unique(as.character(bad_samples$sample)))
+```
+
+# Which mouse genes specifically are changed between references?
+
+```{r warning=FALSE}
+setwd("..")
+
+gene_symbols <- read.csv(file.path("data", "universal_reference_symbol_map.csv"))
+gene_symbols <- subset(gene_symbols, 
+                       ensembl_gene_id %in% df_combined[diff_counts2, "gene_id"])
+
+df_per_geno <- df_combined[diff_counts2,] %>% 
+  group_by(genotype) %>%
+  summarize(gene_ids = list(unique(gene_id)))
+
+for (geno in df_per_geno$genotype) {
+  ids <- df_per_geno$gene_ids[df_per_geno$genotype == geno][[1]]
+  genes <- subset(gene_symbols, ensembl_gene_id %in% ids)
+  print(geno)
+  print(sort(genes$gene_symbol))
+  print("")
+}
+```
+**Filter out non-coding RNA, mitochondrial genes, ribosomal genes, un-annotated
+genes, and pseudogenes from this list**
+
+```{r}
+for (geno in df_per_geno$genotype) {
+  ids <- df_per_geno$gene_ids[df_per_geno$genotype == geno][[1]]
+  genes <- subset(gene_symbols, ensembl_gene_id %in% ids & gene_symbol != "")
+  genes <- genes[!grepl("-ps|mt-|^Rp|^Rn[0-9]|^Gm[0-9]+|^[0-9]+", genes$gene_symbol), ]
+  print(geno)
+  print(sort(genes$gene_symbol))
+  print("")
+}
+```
+
+**What are the 21 genes with count differences > 10?**
+
+```{r}
+df_tmp <- subset(df_combined, abs(difference) > 10) %>%
+  group_by(gene_id) %>%
+  summarize(n_differences = n())
+
+genes <- subset(gene_symbols, ensembl_gene_id %in% df_tmp$gene_id)
+print(sort(genes$gene_symbol))
+```
+
+
+# Conclusion
+
+* Detection of humanized genes appears consistent with each mouse genotype,
+  except for one potentially contaminated *5XFAD_noncarrier* sample. 
+* Detection of mouse orthologs of the humanized genes is similar between the
+  base mouse genome and the universal genome, and expression levels are as 
+  expected across genotypes. 
+* However, adding humanized genes to the reference *does change detected counts 
+  for other mouse genes* as well, excluding mouse orthologs of humanized genes:
+  * the majority of these genes are pseudogenes, mitochondrial, ribosomal, 
+    un-annotated, or non-coding RNAs
+  * For non-carrier genotypes, between 5 and 8 other mouse genes have a 
+    difference of > 1 count in at least one sample 
+    * median 1.33 count difference
+    * max 947 count difference
+  * For genotypes carrying at least one humanized gene:
+    * APOE4: 27-32 other mouse genes (median 1.98, max 14.2)
+    * 3xTg: 7 other mouse genes (median 9.10, max 395)
+    * 5XFAD: 126 other mouse genes (median 2.28, max 306)
+  * **It's unclear to me how much this matters**, although the large number of
+    affected genes in 5XFAD carriers is potentially concerning.
+    
+```{r include=FALSE}
+# Code for getting the above numbers
+tmp = df_combined[diff_counts2,]
+tmp2 = subset(tmp, !(gene_id %in% names(id_map)))
+tmp2$control <- grepl("noncarrier", tmp2$genotype)
+tmp2$control[tmp2$genotype == "Trem2-R47H_homozygous"] = TRUE
+tmp2$apoe <- grepl("APOE4_homozygous", tmp2$genotype)
+
+tmp3 = tmp2 %>% group_by(control, genotype) %>% 
+  summarize(n_genes = length(unique(gene_id)), .groups = "drop")
+tmp4 = tmp2 %>% group_by(control) %>% 
+  summarize(med = median(abs(difference)), mx = max(abs(difference)))
+tmp5 = tmp2 %>% group_by(apoe, genotype) %>% 
+  summarize(n_genes = length(unique(gene_id)), .groups = "drop")
+tmp6 = tmp2 %>% group_by(apoe) %>% 
+  summarize(med = median(abs(difference)), mx = max(abs(difference)))
+tmp7 = tmp2 %>% group_by(genotype) %>% 
+  summarize(n_genes = length(unique(gene_id)), 
+            med = median(abs(difference)), 
+            mx = max(abs(difference)))
+```
