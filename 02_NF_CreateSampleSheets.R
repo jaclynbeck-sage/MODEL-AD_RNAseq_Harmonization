@@ -1,8 +1,8 @@
 # This script creates sample sheets from fastq files in the format needed for
 # the Nextflow pipeline nf-core/rnaseq. This involves getting a list of fastq
 # files from Synapse for each study and matching the files to the associated
-# specimenID in the harmonized metadata. Each study formats their fastq
-# filenames differently so there is a lot of study-specific handling of this.
+# specimenID in the harmonized metadata. Most fastq files are annotated with
+# the specimenID but some studies need extra handling for mismatches.
 #
 # The following studies are currently accounted for in this script:
 #   Jax.IU.Pitt_5XFAD
@@ -14,16 +14,18 @@
 #   UCI_PrimaryScreen
 #   UCI_Trem2_Cuprizone
 #
-# Note that although UCI_Trem2-R47H_NSS exists in the harmonized metadata file,
-# there are some outstanding issues with the fastq filenames so they cannot be
-# processed yet.
-#
 # The CSV file "Model_AD_SynID_list.csv" was created by hand and lists the
 # Synapse IDs of all metadata files and the Synapse IDs of the folders containing
 # fastq files. To add a new study to this process, a row needs to be added for
 # that study in this CSV file, "01_Harmonize_Metadata.R" needs to be re-run to
 # incorporate the metadata for that new study, and any special handling of fastq
 # filenames needs to be added below.
+#
+# After running this script, sample sheets were uploaded to Sage's Nextflow
+# Tower environment, and the nf-synapse pipeline was run to download all of
+# the fastq files and convert the sample sheets to point to their locations on
+# the S3 bucket of the environment. Then, the nf-core/rnaseq pipeline was run
+# with the updated sample sheets to align the data.
 
 library(synapser)
 library(stringr)
