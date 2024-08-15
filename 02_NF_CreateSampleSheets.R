@@ -41,9 +41,6 @@ syn_ids <- read.csv(file.path("data", "Model_AD_SynID_list.csv"))
 meta_file <- synGet("syn61850266", downloadLocation = tmp_dir)
 metadata <- read.csv(file.path(tmp_dir, "Model_AD_merged_metadata.csv"))
 
-# TEMPORARY: Skipping UCI_Trem2-R47H_NSS due to outstanding questions / issues
-syn_ids <- subset(syn_ids, Study != "UCI_Trem2-R47H_NSS")
-
 
 # Create one sample sheet per study --------------------------------------------
 
@@ -62,111 +59,81 @@ for (N in 1:nrow(syn_ids)) {
   })
 
   all_fastqs <- as.data.frame(do.call(rbind, all_fastqs))
+  all_fastqs$specimenID <- NA
+
+  # Each fastq file is annotated in Synapse with the specimen ID. This fetches
+  # the annotations without downloading the file.
+  for (R in 1:nrow(all_fastqs)) {
+    file_meta <- synGet(all_fastqs$id[[R]], downloadFile = FALSE)
+    spec_id <- file_meta$get("specimenID")
+    if (!is.null(spec_id)) {
+      all_fastqs$specimenID[R] <- file_meta$get("specimenID")
+    } else {
+      message(paste("Missing specimen ID for file", all_fastqs$name[R]))
+    }
+  }
 
   # Get which fastqs are read 1 and read 2
   # UCI_ABCA7 uses "1.fq" and "2.fq" instead of "R1.fastq" and "R2.fastq", and
   # the Jax studies use "R1_001.fastq.gz" and "R2_001.fastq.gz", so this regex
-  # should capture all three cases.
+  # should capture all three cases. It recognizes "2", which may or may not be
+  # followed by "_001", followed by ".fa" or ".fq".
   all_fastqs$read <- 1
   all_fastqs$read[grepl("2(_001)?\\.f[a|q]", all_fastqs$name)] <- 2
 
+  # Check that we have an equal number of read 1 and read 2
+  n_reads <- table(all_fastqs$read)
+  stopifnot(n_reads[1] == n_reads[2])
 
-  ## Study-specific handling of filename matching ------------------------------
 
-  if (row$Study %in% c("Jax.IU.Pitt_APOE4.Trem2.R47H", "Jax.IU.Pitt_5XFAD")) {
-    # The first field in the filename is the individualID. "rh" needs to be
-    # added at the end to get the specimenID.
-    fastq_ids <- str_replace(all_fastqs$name, "_.*", "")
-    all_fastqs$specimenID <- paste0(fastq_ids, "rh")
+  ## Study-specific handling of ID formatting issues ---------------------------
 
-  } else if (row$Study %in% c("UCI_3xTg-AD", "UCI_Trem2_Cuprizone")) {
-    # The individual ID is the field right before the sample number and read
-    # number in the filename. For UCI_3xTg-AD, either "lh" or "rh" gets added
-    # at the end to get the specimenID. For UCI_Trem2_Cuprizone, "b" is added
-    # at the end.
-
-    # Matches "_S#_R#.fastq.gz" where S# is something like S8, S12 and R# is R1 or R2
-    fastq_ids <- str_replace(all_fastqs$name, "_S[0-9]+_R[1|2]\\.fastq\\.gz", "")
-    fastq_ids <- str_replace(fastq_ids, ".*_", "")
-
-    if (row$Study == "UCI_Trem2_Cuprizone") {
-      all_fastqs$specimenID <- paste0(fastq_ids, "b")
-    } else {
-      # This is easier than figuring out whether to add "lh" or "rh"
-      rownames(meta_filt) <- meta_filt$individualID
-      all_fastqs$specimenID <- meta_filt[fastq_ids, "specimenID"]
-    }
-
-  } else if (row$Study == "UCI_5XFAD") {
-    # There are two filename formats: For both, the individualID is in the first
-    # field of the filename, but in one format it's followed by a C or H and in
-    # the other it's preceded by "Hipp" or "Cortex". These values are used to
-    # determine if "rc" or "rh" should be added to the individualID to get the
-    # specimenID.
-    fastq_ids <- str_split(all_fastqs$name, "_", simplify = TRUE)[, 1]
-    cortex <- grepl("C", fastq_ids) # Catches both <id>C and Cortex<id>
-    hipp <- grepl("H", fastq_ids) # Catches both <id>H and Hipp<id>
-
-    # Change fastq name format to match specimen ID format
-    fastq_ids[cortex] <- str_replace(fastq_ids[cortex], "Cortex", "")
-    fastq_ids[cortex] <- str_replace(fastq_ids[cortex], "C", "")
-    fastq_ids[cortex] <- paste0(fastq_ids[cortex], "rc")
-
-    fastq_ids[hipp] <- str_replace(fastq_ids[hipp], "Hipp", "")
-    fastq_ids[hipp] <- str_replace(fastq_ids[hipp], "H", "")
-    fastq_ids[hipp] <- paste0(fastq_ids[hipp], "rh")
-
-    all_fastqs$specimenID <- fastq_ids
+  if (row$Study == "UCI_5XFAD") {
+    # Specimen IDs in the annotation are formatted with a numerical ID followed
+    # by "C_RNAseq" or "H_RNAseq", e.g. "305C_RNAseq". However in the metadata
+    # files the IDs are formatted as the numerical ID followed by "rc" or "rh",
+    # so this converts to the right format.
+    all_fastqs$specimenID <- str_replace(all_fastqs$specimenID, "C_.*", "rc")
+    all_fastqs$specimenID <- str_replace(all_fastqs$specimenID, "H_.*", "rh")
 
   } else if (row$Study == "UCI_ABCA7") {
+    # There are 4 fastq files that don't have an annotated specimen ID, but
+    # the filename contains an ID that exists in the assay metadata. For these
+    # 4 files, we extract the ID from the name and add "lh" to it to get the
+    # specimen ID.
+    missing_inds <- which(is.na(all_fastqs$specimenID))
+    fastq_names <- all_fastqs$name[missing_inds]
+
     # IndividualID is the field before the read number, which is either "1" or
     # "2" instead of "R1" or "R2". Files end in "fq.gz". "lh" is added to the
     # individualID to get the specimenID.
-    fastq_ids <- str_replace(all_fastqs$name, "_[1|2]\\.fq\\.gz", "")
+    fastq_ids <- str_replace(fastq_names, "_[1|2]\\.fq\\.gz", "")
     fastq_ids <- str_replace(fastq_ids, ".*_", "")
 
-    all_fastqs$specimenID <- paste0(fastq_ids, "lh")
+    all_fastqs$specimenID[missing_inds] <- paste0(fastq_ids, "lh")
 
   } else if (row$Study == "UCI_hAbeta_KI") {
-    # IndividualID is the first field in the filename, including "-" characters.
-    # Some IDs need to be altered to match what's in the metadata. "rh" is added
-    # to the end of the individualID to get specimenID.
-    fastq_ids <- str_replace(all_fastqs$name, "_.*", "")
-    fastq_ids <- str_replace(fastq_ids, "C57-", "C57")
-    fastq_ids <- str_replace(fastq_ids, "41-2-4", "41-24")
+    # Remove some special characters (commas and parentheses) to match what's in
+    # the metadata
+    all_fastqs$specimenID <- str_replace_all(all_fastqs$specimenID,
+                                             ",|\\(|\\)", "")
 
-    all_fastqs$specimenID <- paste0(fastq_ids, "rh")
-
-  } else if (row$Study == "UCI_PrimaryScreen") {
-    # There are 3 different naming formats for these files:
-    #   1. The individualID is first in the string
-    #   2. The individualID is just before "_S#_R1/2.fastq.gz"
-    #   3. The individualID is just before "_R1/2.fastq.gz"
-    # After extracting the individualID from each filename, "rh" is added to
-    # the end to get specimenIDs.
-
-    # Case 1 handling -- files that start with a 4-digit number
-    case1 <- grepl("^[0-9]{4}", all_fastqs$name)
-    case1_ids <- str_replace(all_fastqs$name[case1], "_.*", "")
-
-    # Case 2 handling and case 3 handling -- all non-case1 files.
-    # Removing the read number and then the sample number makes case 2 and 3
-    # handling identical.
-    case2_3 <- !grepl("^[0-9]{4}", all_fastqs$name)
-    case2_3_ids <- str_replace(all_fastqs$name[case2_3], "_R[1|2].*", "")
-    case2_3_ids <- str_replace(case2_3_ids, "_S[0-9]+$", "")
-    case2_3_ids <- str_replace(case2_3_ids, ".*_", "")
-
-    all_fastqs$specimenID <- ""
-    all_fastqs$specimenID[case1] <- case1_ids
-    all_fastqs$specimenID[case2_3] <- case2_3_ids
-    all_fastqs$specimenID <- paste0(all_fastqs$specimenID, "rh")
+  } else if (row$Study == "UCI_Trem2_Cuprizone") {
+    # Some specimenIDs have an extra "w" in them
+    all_fastqs$specimenID <- str_replace(all_fastqs$specimenID, "w", "")
 
   } else if (row$Study == "UCI_Trem2-R47H_NSS") {
-    # Matches "_S#_R#.fastq.gz" where S# is something like S8, S12 and R# is R1 or R2
-    fastq_ids <- str_replace(all_fastqs$name, "_S[0-9]+_R[1|2]\\.fastq\\.gz", "")
-    fastq_ids <- str_replace(fastq_ids, ".*_", "")
-    # TODO waiting on answers about duplicate/mis-named fastq files
+    # Some samples were re-run so there are 4 associated fastq files instead of
+    # 2. In this case, we want to use only the re-sequenced files, which will
+    # have "RB1" or "RB2" in the name.
+    id_tbl <- table(all_fastqs$specimenID)
+    duplicate_ids <- names(id_tbl)[id_tbl > 2]
+
+    all_fastqs$is_duplicate <- all_fastqs$specimenID %in% duplicate_ids
+    all_fastqs$is_reseq <- grepl("_RB[1|2]_", all_fastqs$name)
+
+    keep <- (!all_fastqs$is_duplicate) | all_fastqs$is_reseq
+    all_fastqs <- all_fastqs[keep, ]
   }
 
   ## Format sample sheet for NextFlow ------------------------------------------
