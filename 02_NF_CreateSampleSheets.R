@@ -34,14 +34,26 @@ library(dplyr)
 synLogin()
 tmp_dir <- file.path("data", "tmp")
 samplesheet_dir <- file.path("data", "sample_sheets")
+provenance_dir <- file.path("data", "provenance_manifests")
 
 dir.create(tmp_dir, showWarnings = FALSE)
 dir.create(samplesheet_dir, showWarnings = FALSE)
+dir.create(provenance_dir, showWarnings = FALSE)
 
 syn_ids <- read.csv(file.path("data", "Model_AD_SynID_list.csv"))
 
-meta_file <- synGet("syn61850266", downloadLocation = tmp_dir)
-metadata <- read.csv(file.path(tmp_dir, "Model_AD_merged_metadata.csv"))
+meta_file <- synGet("syn61850266.1", downloadLocation = tmp_dir)
+metadata <- read.csv(meta_file$path)
+
+ref_fasta <- synGet("syn62035247.1", downloadFile = FALSE)
+ref_gtf <- synGet("syn62035250.1", downloadFile = FALSE)
+
+meta_provenance <- rbind(
+  c(meta_file$id, meta_file$versionNumber, meta_file$name),
+  c(ref_fasta$id, ref_fasta$versionNumber, ref_fasta$name),
+  c(ref_gtf$id, ref_gtf$versionNumber, ref_gtf$name)
+)
+colnames(meta_provenance) <- c("id", "versionNumber", "name")
 
 
 # Create one sample sheet per study --------------------------------------------
@@ -138,6 +150,7 @@ for (N in 1:nrow(syn_ids)) {
     all_fastqs <- all_fastqs[keep, ]
   }
 
+
   ## Format sample sheet for NextFlow ------------------------------------------
 
   lines <- all_fastqs %>%
@@ -148,9 +161,39 @@ for (N in 1:nrow(syn_ids)) {
                       .groups = "drop") %>%
             rename(sample = specimenID)
 
-  write.csv(lines,
-            file.path(samplesheet_dir, paste0(row$Study, "_samplesheet_synapse.csv")),
+  samplesheet_filename <- file.path(samplesheet_dir,
+                                    paste0(row$Study, "_samplesheet_synapse.csv"))
+  write.csv(lines, samplesheet_filename, row.names = FALSE, quote = FALSE)
+
+
+  ## Create provenance manifest for Step 03 ------------------------------------
+
+  provenance <- select(all_fastqs, id, versionNumber, name) %>%
+    mutate(across(id:name, unlist))
+
+  provenance <- rbind(meta_provenance, provenance)
+
+  write.csv(provenance,
+            file.path(provenance_dir, paste0(row$Study, "_provenance.csv")),
             row.names = FALSE, quote = FALSE)
+
+
+  ## Upload sample sheet to Synapse --------------------------------------------
+
+  # Remove universal reference genome IDs as they are not used for sample sheets,
+  # only in step 03.
+  samplesheet_provenance <- subset(provenance,
+                                   !grepl("[fa|gtf]\\.gz", provenance$name))
+  used_ids <- paste(samplesheet_provenance$id,
+                    samplesheet_provenance$versionNumber,
+                    sep = ".")
+
+  github_link <- "https://github.com/jaclynbeck-sage/MODEL-AD_RNAseq_Harmonization/blob/main/02_NF_CreateSampleSheets.R"
+  syn_file <- File(samplesheet_filename, parent = "syn62147112")
+  synStore(syn_file,
+           used = used_ids,
+           executed = github_link,
+           forceVersion = FALSE)
 
 
   ## Print warnings for missing fastqs or extra fastqs -------------------------
