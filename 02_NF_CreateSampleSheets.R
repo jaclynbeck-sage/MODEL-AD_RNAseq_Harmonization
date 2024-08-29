@@ -31,6 +31,12 @@ library(synapser)
 library(stringr)
 library(dplyr)
 
+# Synapse IDs used in this script that are not in Model_AD_SynID_list.csv
+syn_metadata_file_id <- "syn61850266.2"
+syn_ref_fasta_id <- "syn62035247.1"
+syn_ref_gtf_id <- "syn62035250.1"
+syn_samplesheet_folder_id <- "syn62147112"
+
 synLogin()
 tmp_dir <- file.path("data", "tmp")
 samplesheet_dir <- file.path("data", "sample_sheets")
@@ -42,11 +48,12 @@ dir.create(provenance_dir, showWarnings = FALSE)
 
 syn_ids <- read.csv(file.path("data", "Model_AD_SynID_list.csv"))
 
-meta_file <- synGet("syn61850266.1", downloadLocation = tmp_dir)
+meta_file <- synGet(syn_metadata_file_id, downloadLocation = tmp_dir,
+                    ifcollision = "overwrite.local")
 metadata <- read.csv(meta_file$path)
 
-ref_fasta <- synGet("syn62035247.1", downloadFile = FALSE)
-ref_gtf <- synGet("syn62035250.1", downloadFile = FALSE)
+ref_fasta <- synGet(syn_ref_fasta_id, downloadFile = FALSE)
+ref_gtf <- synGet(syn_ref_gtf_id, downloadFile = FALSE)
 
 meta_provenance <- rbind(
   c(meta_file$id, meta_file$versionNumber, meta_file$name),
@@ -183,13 +190,13 @@ for (N in 1:nrow(syn_ids)) {
   # Remove universal reference genome IDs as they are not used for sample sheets,
   # only in step 03.
   samplesheet_provenance <- subset(provenance,
-                                   !grepl("[fa|gtf]\\.gz", provenance$name))
+                                   !grepl("(fa|gtf)\\.gz", provenance$name))
   used_ids <- paste(samplesheet_provenance$id,
                     samplesheet_provenance$versionNumber,
                     sep = ".")
 
   github_link <- "https://github.com/jaclynbeck-sage/MODEL-AD_RNAseq_Harmonization/blob/main/02_NF_CreateSampleSheets.R"
-  syn_file <- File(samplesheet_filename, parent = "syn62147112")
+  syn_file <- File(samplesheet_filename, parent = syn_samplesheet_folder_id)
   synStore(syn_file,
            used = used_ids,
            executed = github_link,

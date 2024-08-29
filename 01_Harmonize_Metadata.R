@@ -26,6 +26,9 @@ library(synapser)
 library(stringr)
 library(dplyr)
 
+# Synapse IDs used in this script that are not in Model_AD_SynID_list.csv
+syn_metadata_folder_id <- "syn61850200"
+
 synLogin()
 tmp_dir <- file.path("data", "tmp")
 dir.create(tmp_dir, showWarnings = FALSE)
@@ -123,14 +126,39 @@ metadata <- lapply(1:nrow(metadata_list), function(N) {
 
   combined_df$study_name <- row$Study
 
+  ## Fix some specimenIDs post-merge -------------------------------------------
+
+  # UCI_hAbeta_KI: has parenthesis in some specimenIDs, which we remove to avoid
+  # issues downstream
+  combined_df$specimenID <- str_replace(combined_df$specimenID, "\\(", "")
+  combined_df$specimenID <- str_replace(combined_df$specimenID, "\\)", "")
+
+  # Jax.IU.Pitt_5XFAD and UCI_hAbeta_KI: have commas in some individualIDs and
+  # specimenIDs. The commas will cause problems with CSV files downstream so we
+  # remove them here.
+  combined_df$specimenID <- str_replace(combined_df$specimenID, "\\,", "")
+  combined_df$individualID <- str_replace(combined_df$individualID, "\\,", "")
+
+  # What the specimen IDs will look like when the counts files are read in by
+  # R, to make it easier to match to the metadata. "R_safe_specimenID" is
+  # for reading in individual study files, while "merged_file_specimenID" is
+  # what they will look like in the merged counts files containing all studies.
+  combined_df$R_safe_specimenID <- make.names(combined_df$specimenID)
+  combined_df$merged_file_specimenID <- make.names(
+    paste(combined_df$study_name, combined_df$specimenID, sep = ".")
+  )
+
+  ## Create final study-specific data frame ------------------------------------
+
   # Filter to columns of interest and ensure that all columns are in the same
   # order across all studies. Also make sure all rows are unique (some studies
   # have duplicate rows in one or more files).
-  combined_df <- select(combined_df, individualID, specimenID, platform, RIN,
-                        rnaBatch, libraryBatch, sequencingBatch, organ, tissue,
-                        samplingAge, sex, ageDeath, ageDeathUnits, genotype,
-                        genotypeBackground, modelSystemName, study_name) %>%
-                  distinct()
+  combined_df <- combined_df %>%
+    select(individualID, specimenID, R_safe_specimenID, merged_file_specimenID,
+           platform, RIN, rnaBatch, libraryBatch, sequencingBatch, organ,
+           tissue, samplingAge, sex, ageDeath, ageDeathUnits, genotype,
+           genotypeBackground, modelSystemName, study_name) %>%
+    distinct()
   return(combined_df)
 })
 
@@ -183,27 +211,13 @@ for (G in 1:length(geno_map)) {
 metadata_combined$genotype <- str_replace(metadata_combined$genotype, ",", ";")
 
 
-# Study-specific fixes post-merge ----------------------------------------------
-
-# UCI_hAbeta_KI: has parenthesis in some specimenIDs, which we remove to avoid
-# issues downstream
-metadata_combined$specimenID <- str_replace(metadata_combined$specimenID, "\\(", "")
-metadata_combined$specimenID <- str_replace(metadata_combined$specimenID, "\\)", "")
-
-# Jax.IU.Pitt_5XFAD and UCI_hAbeta_KI: have commas in some individualIDs and
-# specimenIDs. The commas will cause problems with CSV files downstream so we
-# remove them here.
-metadata_combined$specimenID <- str_replace(metadata_combined$specimenID, "\\,", "")
-metadata_combined$individualID <- str_replace(metadata_combined$individualID, "\\,", "")
-
-
 # Save to file and upload to Synapse -------------------------------------------
 
 write.csv(metadata_combined, file.path("data", "Model_AD_merged_metadata.csv"),
           row.names = FALSE, quote = FALSE)
 
 syn_file <- File(file.path("data", "Model_AD_merged_metadata.csv"),
-                 parent = "syn61850200")
+                 parent = syn_metadata_folder_id)
 
 all_syn_ids <- c(metadata_list$Metadata_Assay,
                  metadata_list$Metadata_Biospecimen,
