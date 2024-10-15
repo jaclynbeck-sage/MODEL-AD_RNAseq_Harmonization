@@ -63,7 +63,7 @@ metadata <- lapply(1:nrow(metadata_list), function(N) {
   if (row$Study == "Jax.IU.Pitt_5XFAD") {
     ageDeath <- as.Date(individual_df$dateDeath, format = "%m/%d/%Y") -
       as.Date(individual_df$dateBirth, format = "%m/%d/%Y")
-    individual_df$ageDeath <- as.numeric(ageDeath) / 12 # days -> months
+    individual_df$ageDeath <- as.numeric(ageDeath) / 30 # days -> months
     individual_df$ageDeathUnits <- "months"
   }
 

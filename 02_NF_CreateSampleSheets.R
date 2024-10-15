@@ -32,7 +32,7 @@ library(stringr)
 library(dplyr)
 
 # Synapse IDs used in this script that are not in Model_AD_SynID_list.csv
-syn_metadata_file_id <- "syn61850266.2"
+syn_metadata_file_id <- "syn61850266.3"
 syn_ref_fasta_id <- "syn62035247.1"
 syn_ref_gtf_id <- "syn62035250.1"
 syn_samplesheet_folder_id <- "syn62147112"
