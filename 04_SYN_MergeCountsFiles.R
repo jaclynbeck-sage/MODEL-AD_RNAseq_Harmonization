@@ -107,7 +107,8 @@ for (file_type in names(counts_list[[1]])) {
   # Extract the "counts" data frame from each sub-list in file_info, then
   # merge all the data frames together using gene_id and transcript_id as keys.
   counts <- lapply(file_info, "[[", "counts")
-  counts <- purrr::reduce(counts, merge, by = c("gene_id", "transcript_id"))
+  counts <- purrr::reduce(counts, merge, by = c("gene_id", "transcript_id"),
+                          all = TRUE)
 
   # Extract the "provenance" vector from each sub-list in file_info
   provenance <- sapply(file_info, "[[", "provenance")
