@@ -32,12 +32,14 @@ library(stringr)
 library(dplyr)
 
 # Synapse IDs used in this script that are not in Model_AD_SynID_list.csv
-syn_metadata_file_id <- "syn61850266.3"
-syn_ref_fasta_id <- "syn62035247.1"
-syn_ref_gtf_id <- "syn62035250.1"
+syn_metadata_file_id <- "syn61850266"
+syn_ref_fasta_id <- "syn62035247"
+syn_ref_gtf_id <- "syn62035250"
+syn_jax_5xfad_fastq_key_id <- "syn34733116"
 syn_samplesheet_folder_id <- "syn62147112"
+syn_portal_query_id <- "syn11346063"
 
-synLogin()
+synLogin(silent = TRUE)
 tmp_dir <- file.path("data", "tmp")
 samplesheet_dir <- file.path("data", "sample_sheets")
 provenance_dir <- file.path("data", "provenance_manifests")
@@ -60,7 +62,7 @@ meta_provenance <- rbind(
   c(ref_fasta$id, ref_fasta$versionNumber, ref_fasta$name),
   c(ref_gtf$id, ref_gtf$versionNumber, ref_gtf$name)
 )
-colnames(meta_provenance) <- c("id", "versionNumber", "name")
+colnames(meta_provenance) <- c("id", "currentVersion", "name")
 
 
 # Create one sample sheet per study --------------------------------------------
@@ -70,29 +72,27 @@ for (N in 1:nrow(syn_ids)) {
   print(row$Study)
   meta_filt <- subset(metadata, study_name == row$Study)
 
-  fastq_folders <- str_split(row$Fastq_Folders, ";")[[1]]
-
   ## Get a list of all fastqs available ----------------------------------------
 
-  all_fastqs <- lapply(fastq_folders, function(folder) {
-    children <- synGetChildren(folder, includeTypes = list("file"))$asList()
-    children <- do.call(rbind, children)
-  })
+  # Query the portal -- this query will work correctly for all studies except
+  # UCI_ABCA7
+  query <- paste0("SELECT * FROM ", syn_portal_query_id, " WHERE ",
+                  "( ( \"assay\" HAS ( 'long-read rnaSeq', 'rnaSeq' ) ) AND ",
+                  "( \"fileFormat\" = 'fastq' ) AND ",
+                  "( \"isMultiSpecimen\" = 'false' OR \"isMultiSpecimen\" IS NULL ) AND ",
+                  "( \"study\" HAS ( '", row$Study, "' ) ) )")
 
-  all_fastqs <- as.data.frame(do.call(rbind, all_fastqs))
-  all_fastqs$specimenID <- NA
-
-  # Each fastq file is annotated in Synapse with the specimen ID. This fetches
-  # the annotations without downloading the file.
-  for (R in 1:nrow(all_fastqs)) {
-    file_meta <- synGet(all_fastqs$id[[R]], downloadFile = FALSE)
-    spec_id <- file_meta$get("specimenID")
-    if (!is.null(spec_id)) {
-      all_fastqs$specimenID[R] <- file_meta$get("specimenID")
-    } else {
-      message(paste("Missing specimen ID for file", all_fastqs$name[R]))
-    }
+  # UCI_ABCA7 fastq files are not all properly annotated
+  if (row$Study == "UCI_ABCA7") {
+    query <- paste0("SELECT * FROM ", syn_portal_query_id, " WHERE ",
+                    "( ( \"name\" LIKE '%fq.gz%' ) ) AND ",
+                    "( ( ( \"study\" HAS ( '", row$Study, "' ) ) ) )")
   }
+
+  result <- synTableQuery(query, includeRowIdAndRowVersion = FALSE)
+
+  all_fastqs <- read.csv(result$filepath) %>%
+    select(id, name, specimenID, currentVersion)
 
   # Get which fastqs are read 1 and read 2
   # UCI_ABCA7 uses "1.fq" and "2.fq" instead of "R1.fastq" and "R2.fastq", and
@@ -109,7 +109,30 @@ for (N in 1:nrow(syn_ids)) {
 
   ## Study-specific handling of ID formatting issues ---------------------------
 
-  if (row$Study == "UCI_5XFAD") {
+  # The annotated specimenIDs don't match the updated metadata files for the
+  # Jax studies so we map between the two using the fastq files key provided
+  # with the updated metadata
+  if (row$Study %in% c("Jax.IU.Pitt_5XFAD", "Jax.IU.Pitt_APOE4.Trem2.R47H")) {
+    fastq_key_id <- ifelse(row$Study == "Jax.IU.Pitt_5XFAD",
+                           syn_jax_5xfad_fastq_key_id,
+                           row$Metadata_Assay)
+
+    fastq_key_file <- synGet(fastq_key_id, downloadLocation = tmp_dir,
+                             ifcollision = "overwrite.local")
+    fastq_key_df <- read.csv(fastq_key_file$path) %>%
+      select(sampleName, fastq_1, fastq_2) %>%
+      tidyr::pivot_longer(cols = c(fastq_1, fastq_2),
+                          names_to = "fastq_type",
+                          values_to = "name") %>%
+      mutate(name = str_replace(name, "_S.*_L00.", "")) %>%
+      distinct() %>%
+      dplyr::rename(specimenID = sampleName)
+
+    all_fastqs <- all_fastqs %>%
+      select(-specimenID) %>%
+      merge(fastq_key_df)
+
+  } else if (row$Study == "UCI_5XFAD") {
     # Specimen IDs in the annotation are formatted with a numerical ID followed
     # by "C_RNAseq" or "H_RNAseq", e.g. "305C_RNAseq". However in the metadata
     # files the IDs are formatted as the numerical ID followed by "rc" or "rh",
@@ -122,7 +145,8 @@ for (N in 1:nrow(syn_ids)) {
     # the filename contains an ID that exists in the assay metadata. For these
     # 4 files, we extract the ID from the name and add "lh" to it to get the
     # specimen ID.
-    missing_inds <- which(is.na(all_fastqs$specimenID))
+    missing_inds <- which(is.na(all_fastqs$specimenID) |
+                            nchar(all_fastqs$specimenID) == 0)
     fastq_names <- all_fastqs$name[missing_inds]
 
     # IndividualID is the field before the read number, which is either "1" or
@@ -166,18 +190,16 @@ for (N in 1:nrow(syn_ids)) {
                       fastq_2 = paste0("syn://", id[read == 2]),
                       strandedness = "auto",
                       .groups = "drop") %>%
-            rename(sample = specimenID)
+            dplyr::rename(sample = specimenID)
 
   samplesheet_filename <- file.path(samplesheet_dir,
-                                    paste0(row$Study, "_samplesheet_synapse.csv"))
+                                    paste0(row$Study, "_samplesheet_rnaseq.csv"))
   write.csv(lines, samplesheet_filename, row.names = FALSE, quote = FALSE)
 
 
   ## Create provenance manifest for Step 03 ------------------------------------
 
-  provenance <- select(all_fastqs, id, versionNumber, name) %>%
-    mutate(across(id:name, unlist))
-
+  provenance <- select(all_fastqs, id, currentVersion, name)
   provenance <- rbind(meta_provenance, provenance)
 
   write.csv(provenance,
@@ -192,7 +214,7 @@ for (N in 1:nrow(syn_ids)) {
   samplesheet_provenance <- subset(provenance,
                                    !grepl("(fa|gtf)\\.gz", provenance$name))
   used_ids <- paste(samplesheet_provenance$id,
-                    samplesheet_provenance$versionNumber,
+                    samplesheet_provenance$currentVersion,
                     sep = ".")
 
   github_link <- "https://github.com/jaclynbeck-sage/MODEL-AD_RNAseq_Harmonization/blob/main/02_NF_CreateSampleSheets.R"

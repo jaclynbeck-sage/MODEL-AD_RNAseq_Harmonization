@@ -29,7 +29,7 @@ library(dplyr)
 # Synapse IDs used in this script that are not in Model_AD_SynID_list.csv
 syn_metadata_folder_id <- "syn61850200"
 
-synLogin()
+synLogin(silent = TRUE)
 tmp_dir <- file.path("data", "tmp")
 dir.create(tmp_dir, showWarnings = FALSE)
 
@@ -44,11 +44,14 @@ metadata <- lapply(1:nrow(metadata_list), function(N) {
   ## Fetch metadata files ------------------------------------------------------
 
   assay_file <- synGet(row$Metadata_Assay,
-                       downloadLocation = tmp_dir)
+                       downloadLocation = tmp_dir,
+                       ifcollision = "overwrite.local")
   biospec_file <- synGet(row$Metadata_Biospecimen,
-                         downloadLocation = tmp_dir)
+                         downloadLocation = tmp_dir,
+                         ifcollision = "overwrite.local")
   individual_file <- synGet(row$Metadata_Individual,
-                            downloadLocation = tmp_dir)
+                            downloadLocation = tmp_dir,
+                            ifcollision = "overwrite.local")
 
   assay_df <- read.csv(assay_file$path)
   biospec_df <- read.csv(biospec_file$path)
@@ -57,85 +60,80 @@ metadata <- lapply(1:nrow(metadata_list), function(N) {
 
   ## Study-specific fixes ------------------------------------------------------
 
-  # Jax.IU.Pitt_5XFAD: the "ageDeath" field is missing in the individual
-  # metadata, so we calculate it from dateDeath and dateBirth. There are some
-  # NA values in these fields but not in any individuals with RNA seq data.
-  if (row$Study == "Jax.IU.Pitt_5XFAD") {
-    ageDeath <- as.Date(individual_df$dateDeath, format = "%m/%d/%Y") -
-      as.Date(individual_df$dateBirth, format = "%m/%d/%Y")
-    individual_df$ageDeath <- as.numeric(ageDeath) / 30 # days -> months
-    individual_df$ageDeathUnits <- "months"
-  }
-
-  # Jax.IU.Pitt_APOE4.Trem2.R47H: For some reason this study doesn't have any of
-  # the brain samples in its assay file so we can't merge those files. Instead
-  # we create a fake dataframe with the expected structure of an assay metadata
-  # file.
+  # Jax.IU.Pitt_APOE4.Trem2.R47H: We are temporarily using a file from the
+  # staging version of the project, not what is released in the portal. This
+  # file isn't technically in the format of a portal assay file but has the
+  # information we need, with some extra restructuring needed. This file has two
+  # rows for some specimenIDs because of sequencing on two separate lanes. We
+  # remove duplicate rows since the fastqs we are using have both lanes merged.
   if (row$Study == "Jax.IU.Pitt_APOE4.Trem2.R47H") {
-    # The %in% is necessary instead of != in this statement due to NAs
-    brain_only <- subset(biospec_df, organ == "brain" &
-                           !(specimenIdSource %in% c("soluble")))
+    assay_df <- assay_df %>%
+      dplyr::rename(individualID = animalName,
+                    specimenID = sampleName) %>%
 
-    # Create a fake assay metadata dataframe with empty values for fields that
-    # need to be there but we don't have information for.
-    assay_df <- data.frame(specimenID = brain_only$specimenID,
-                           platform = NA,
-                           RIN = NA,
-                           rnaBatch = NA,
-                           libraryBatch = NA,
-                           sequencingBatch = NA)
-  }
+      # Make totalReads a number
+      mutate(totalReads = str_replace_all(totalReads, ",", ""),
+             totalReads = as.numeric(totalReads)) %>%
 
-  # UCI_5XFAD: The specimen IDs in the assay metadata do not match what is in
-  # the biospecimen metadata, so we need to fix them. In the assay metadata
-  # they are of the format "<individualID>(H or C)_RNAseq", (e.g. "295C_RNAseq")
-  # while in the biospecimen metadata they are of the format
-  # "<individualID>r(h or c)", (e.g. "295rc").
-  #
-  if (row$Study == "UCI_5XFAD") {
+      # Remove references to specific fastq files
+      select(!contains("fastq"), -path, -study, -lane) %>%
+
+      # Add totalReads for both lanes together. Some specimenIDs were sequenced
+      # in two different batches so we combine the batch names
+      group_by_at(setdiff(colnames(.), c("totalReads", "sequencingBatch"))) %>%
+      summarize(totalReads = sum(totalReads),
+                sequencingBatch = paste(sort(unique(sequencingBatch)), collapse = ";"),
+                .groups = "drop") %>%
+
+      # Add missing columns to make the format match assay metadata files
+      mutate(platform = NA, RIN = NA,
+             rnaBatch = sequencingBatch,
+             libraryBatch = sequencingBatch)
+
+  } else if (row$Study == "UCI_5XFAD") {
+    # UCI_5XFAD: The specimen IDs in the assay metadata do not match what is in
+    # the biospecimen metadata, so we need to fix them. In the assay metadata
+    # they are of the format "<individualID>(H or C)_RNAseq", (e.g.
+    # "295C_RNAseq") while in the biospecimen metadata they are of the format
+    # "<individualID>r(h or c)", (e.g. "295rc").
     assay_df$specimenID <- str_replace(assay_df$specimenID, "_RNAseq", "")
     assay_df$specimenID <- str_replace(assay_df$specimenID, "H", "rh")
     assay_df$specimenID <- str_replace(assay_df$specimenID, "C", "rc")
-  }
 
-  # UCI_hAbeta_KI: Some platform entries are mis-labeled as NextSeq501,
-  # NextSeq502, or NextSeq503 when they should all be NextSeq500. The
-  # biospecimen metadata file is missing the "samplingAge" column.
-  if (row$Study == "UCI_hAbeta_KI") {
+  } else if (row$Study == "UCI_hAbeta_KI") {
+    # UCI_hAbeta_KI: Some platform entries are mis-labeled as NextSeq501,
+    # NextSeq502, or NextSeq503 when they should all be NextSeq500. The
+    # biospecimen metadata file is missing the "samplingAge" column.
     assay_df$platform <- str_replace(assay_df$platform,
                                      "NextSeq50[1|2|3]",
                                      "NextSeq500")
     biospec_df$samplingAge <- NA
   }
 
-  # Studies UCI_3xTg-AD, UCI_ABCA7, UCI_PrimaryScreen, UCI_Trem2_Cuprizone, and
-  # UCI_Trem2-R47H_NSS need no corrections in this section
+  # Studies Jax.IU.Pitt_5XFAD, UCI_3xTg-AD, UCI_ABCA7, UCI_PrimaryScreen,
+  # UCI_Trem2_Cuprizone, and UCI_Trem2-R47H_NSS need no specialized corrections
+  # in this section
 
 
   ## Merge all metadata together -----------------------------------------------
 
-  # Only keep rows that exist inall dataframes so we only retain RNA seq-related
-  # samples.
-  combined_df <- merge(assay_df, biospec_df,
-                       by = "specimenID",
-                       all = FALSE)
-
-  combined_df <- merge(combined_df, individual_df,
-                       by = "individualID",
-                       all = FALSE)
+  # Only keep rows that exist in all dataframes so we only retain RNA
+  # seq-related samples.
+  combined_df <- merge(assay_df, biospec_df, all = FALSE) %>%
+    merge(individual_df, all = FALSE)
 
   combined_df$study_name <- row$Study
 
+
   ## Fix some specimenIDs post-merge -------------------------------------------
 
-  # UCI_hAbeta_KI: has parenthesis in some specimenIDs, which we remove to avoid
+  # UCI_hAbeta_KI has parenthesis in some specimenIDs, which we remove to avoid
   # issues downstream
   combined_df$specimenID <- str_replace(combined_df$specimenID, "\\(", "")
   combined_df$specimenID <- str_replace(combined_df$specimenID, "\\)", "")
 
-  # Jax.IU.Pitt_5XFAD and UCI_hAbeta_KI: have commas in some individualIDs and
-  # specimenIDs. The commas will cause problems with CSV files downstream so we
-  # remove them here.
+  # UCI_hAbeta_KI has commas in some individualIDs and specimenIDs. The commas
+  # will cause problems with CSV files downstream so we remove them here.
   combined_df$specimenID <- str_replace(combined_df$specimenID, "\\,", "")
   combined_df$individualID <- str_replace(combined_df$individualID, "\\,", "")
 
@@ -148,6 +146,17 @@ metadata <- lapply(1:nrow(metadata_list), function(N) {
     paste(combined_df$study_name, combined_df$specimenID, sep = ".")
   )
 
+  # General fix to all studies, we need the "treatmentType" and "treatmentDose"
+  # columns for the Cuprizone study but some of the other studies don't have
+  # these fields
+  if (!hasName(combined_df, "treatmentType")) {
+    combined_df$treatmentType <- NA
+  }
+  if (!hasName(combined_df, "treatmentDose")) {
+    combined_df$treatmentDose <- NA
+  }
+
+
   ## Create final study-specific data frame ------------------------------------
 
   # Filter to columns of interest and ensure that all columns are in the same
@@ -156,8 +165,9 @@ metadata <- lapply(1:nrow(metadata_list), function(N) {
   combined_df <- combined_df %>%
     select(individualID, specimenID, R_safe_specimenID, merged_file_specimenID,
            platform, RIN, rnaBatch, libraryBatch, sequencingBatch, organ,
-           tissue, samplingAge, sex, ageDeath, ageDeathUnits, genotype,
-           genotypeBackground, modelSystemName, study_name) %>%
+           tissue, samplingAge, treatmentType, treatmentDose, sex, ageDeath,
+           ageDeathUnits, genotype, genotypeBackground, modelSystemName,
+           study_name) %>%
     distinct()
   return(combined_df)
 })
@@ -174,9 +184,6 @@ metadata_combined <- do.call(rbind, metadata)
 #       genotypes.
 # Note: "Trem2-KO" and "Trem2-R47H_CSS_homozygous" don't exist on the approved
 #       list but should be on it, so we leave these values as-is.
-# Note: "APOE4-KI_noncarrier" is listed as "APOE4-KI_WT" in the approved list,
-#       however this is a transgene so it seems more appropriate to label it
-#       as "noncarrier", so I've done that here.
 geno_map <- c("3xTg-AD_homozygous" = "3xTg-AD_carrier",
               "3XTg-AD_noncarrier" = "3xTg-AD_noncarrier",
               "5XFAD_hemizygous" = "5XFAD_carrier",
@@ -184,12 +191,12 @@ geno_map <- c("3xTg-AD_homozygous" = "3xTg-AD_carrier",
               "Abca7V1599M_noncarrier" = "Abca7-V1599M_WT",
               "ABI3_S209F_homozygous" = "Abi3-S209F_homozygous",
               "ABI3_S209F_noncarrier" = "Abi3-S209F_WT",
-              "APOE4_heterozygous" = "APOE4-KI_heterozygous",
-              "APOE4_homozygous" = "APOE4-KI_homozygous",
-              "APOE4_noncarrier" = "APOE4-KI_noncarrier",
               "BIN1_K358R_noncarrier" = "Bin1-K358R_WT",
               "hABKI  HO" = "hAbeta-KI_LoxP_homozygous",
               "hABKI  WT" = "hAbeta-KI_LoxP_WT",
+              "Homozygous" = "homozygous",
+              "Heterozygous" = "heterozygous",
+              "NA; NA" = NA,
               "PICALM_H458R_homozygous" = "Picalm-H458R_homozygous",
               "PICALM_H458R_noncarrier" = "Picalm-H458R_WT",
               "SPI1_homozygous" = "Spi1-rs1377416_homozygous",
@@ -202,9 +209,9 @@ geno_map <- c("3xTg-AD_homozygous" = "3xTg-AD_carrier",
               )
 
 for (G in 1:length(geno_map)) {
-  metadata_combined$genotype <- str_replace(metadata_combined$genotype,
-                                            names(geno_map)[G],
-                                            geno_map[G])
+  metadata_combined$genotype <- str_replace_all(metadata_combined$genotype,
+                                                names(geno_map)[G],
+                                                geno_map[G])
 }
 
 # Genotypes should be semicolon-separated, not comma-separated
