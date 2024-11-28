@@ -1,0 +1,80 @@
+---
+title: "UCI_3xTg-AD Dataset Exploration"
+author: Jaclyn Beck (Sage Bionetworks)
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Set up
+
+```{r initialize, include=FALSE}
+source("vis_utils.R")
+data <- load_data("UCI_3xTg-AD")
+```
+
+## Study design
+
+```{r 3xTg-design}
+meta_vis <- data$metadata %>%
+  mutate(ageDeath = paste(ageDeath, "months"))
+
+# Study design
+print(table(meta_vis$genotype, meta_vis$ageDeath, meta_vis$sex))
+```
+
+
+### Check for batches
+
+No batches present:
+
+```{r 3xTg-batches}
+data$metadata %>%
+  group_by(rnaBatch, libraryBatch, sequencingBatch) %>%
+  summarize(count = n(), .groups = "drop")
+```
+
+### Human gene expression
+
+```{r 3xTg-human-expression, fig.width=8}
+plt <- plot_human_genes(data$counts, data$metadata, data$symbol_map)
+print(plt)
+```
+
+### Quality plots of samples
+
+```{r 3xTg-deseq, message=FALSE, warning=FALSE}
+dds <- DESeqDataSetFromMatrix(data$counts, meta_vis, design = ~ genotype)
+dds <- DESeq(dds, quiet = TRUE)
+plotDispEsts(dds)
+```
+
+```{r 3xTg-vst}
+vsd <- vst(dds, blind = FALSE)
+meanSdPlot(assay(vsd))
+```
+
+### PCA plots
+
+```{r 3xTg-pca, message=FALSE, warning=FALSE}
+plotPCA(vsd, intgroup = "RIN") + theme_bw() + ggtitle("RIN")
+
+plotPCA(vsd, intgroup = c("genotype", "sex")) + 
+  ggtitle("Genotype vs sex") +
+  scale_color_brewer(palette = "Set1") + theme_bw() 
+
+plotPCA(vsd, intgroup = c("genotype", "ageDeath")) + 
+  ggtitle("Genotype vs age") +
+  scale_color_brewer(palette = "Set1") + theme_bw()
+
+plotPCA(vsd, intgroup = c("sex", "ageDeath")) +
+  ggtitle("Sex vs age") +
+  scale_color_brewer(palette = "Set1") + theme_bw()
+```
+
+3xTg-AD expression clusters by sex, genotype, and age. 

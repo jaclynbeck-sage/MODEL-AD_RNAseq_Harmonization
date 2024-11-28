@@ -17,10 +17,10 @@
 #   UCI_Trem2-R47H_NSS
 #
 # The CSV file "Model_AD_SynID_list.csv" was created by hand and lists the
-# Synapse IDs of all metadata files and the Synapse IDs of the folders containing
-# fastq files. To add a new study to this process, a row needs to be added for
-# that study in this CSV file and any additional fixes to that study's metadata
-# should be added in the script below.
+# Synapse IDs of all metadata files, some of which do not currently exist on the
+# portal and cannot be queried for. To add a new study to this process, a row
+# needs to be added for that study in this CSV file and any additional fixes to
+# that study's metadata should be added in the script below.
 
 library(synapser)
 library(stringr)

@@ -1,0 +1,171 @@
+---
+title: "UCI_5XFAD Dataset Exploration"
+author: Jaclyn Beck (Sage Bionetworks)
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Set up
+
+```{r initialize, include=FALSE}
+source("vis_utils.R")
+data <- load_data("UCI_5XFAD")
+```
+
+## Study design
+
+```{r Uci5x-design}
+meta_vis <- data$metadata %>%
+  mutate(ageDeath = paste(ageDeath, "months"))
+
+# Study design
+print(table(meta_vis$genotype, meta_vis$ageDeath, meta_vis$sex, meta_vis$tissue))
+```
+
+## Check for batches
+
+```{r Uci5x-batches1}
+data$metadata %>%
+  group_by(rnaBatch, libraryBatch, sequencingBatch) %>%
+  summarize(count = n(), .groups = "drop")
+```
+
+All 3 batch variables are identical.
+
+Batches contain both genotypes:
+
+```{r Uci5x-batches2}
+meta_vis <- meta_vis %>%
+  mutate(batch = paste("Batch", rnaBatch))
+
+table(meta_vis$batch, meta_vis$genotype)
+```
+
+Batches contain both sexes:
+
+```{r Uci5x-batches3}
+table(meta_vis$batch, meta_vis$sex)
+```
+
+Batches are highly specific to `ageDeath`:
+
+```{r Uci5x-batches4}
+table(meta_vis$batch, meta_vis$ageDeath)
+```
+
+The single 12-month sample in the `NA` batch could maybe be thrown out.
+
+Batches contain both tissues:
+
+```{r Uci5x-batches5}
+table(meta_vis$batch, meta_vis$tissue)
+```
+
+```{r Uci5x-batches6}
+meta_vis_18 <- meta_vis %>%
+  mutate(group = paste(tissue, sex, genotype)) %>%
+  subset(ageDeath == "18 months")
+
+table(meta_vis_18$group, meta_vis_18$batch)
+```
+
+Examining the 18-month mice in more detail shows that there is only 1 male sample per tissue/genotype in the `NA` batch, which isn't ideal either. The 18-month sample sizes are very unbalanced between groups, so it's unclear whether this group should even be analyzed, and if so, whether batch differences will negatively effect the male samples.
+
+## Human gene expression
+
+```{r Uci5x-human-expression, fig.width=8}
+plt <- plot_human_genes(data$counts, data$metadata, data$symbol_map)
+print(plt)
+```
+
+## Quality plots of samples -- Cerebral cortex
+
+```{r Uci5x-dds-cc, message=FALSE, warning=FALSE}
+meta_cc <- subset(meta_vis, tissue == "cerebral cortex")
+counts_cc <- data$counts[, meta_cc$merged_file_specimenID]
+dds_cc <- DESeqDataSetFromMatrix(counts_cc, meta_cc, design = ~ genotype)
+dds_cc <- DESeq(dds_cc, quiet = TRUE)
+plotDispEsts(dds_cc)
+```
+
+```{r Uci5x-vst-cc}
+vsd_cc <- vst(dds_cc, blind = FALSE)
+meanSdPlot(assay(vsd_cc))
+```
+
+## PCA plots -- Cerebral cortex
+
+```{r Uci5x-pca-cc, message=FALSE}
+plotPCA(vsd_cc, intgroup = "RIN") + theme_bw() + ggtitle("RIN")
+
+plotPCA(vsd_cc, intgroup = c("genotype", "sex")) + 
+  ggtitle("Genotype vs sex") +
+  scale_color_brewer(palette = "Set1") + theme_bw() 
+
+plotPCA(vsd_cc, intgroup = c("genotype", "ageDeath")) + 
+  ggtitle("Genotype vs age") +
+  scale_color_brewer(palette = "Set1") + theme_bw()
+
+plotPCA(vsd_cc, intgroup = c("sex", "ageDeath")) +
+  ggtitle("Sex vs age") +
+  scale_color_brewer(palette = "Set1") + theme_bw()
+
+plotPCA(vsd_cc, intgroup = c("rnaBatch", "ageDeath")) +
+  ggtitle("Batch vs age") +
+  scale_color_brewer(palette = "Set1") + theme_bw()
+
+plotPCA(vsd_cc, intgroup = c("rnaBatch", "genotype")) +
+  ggtitle("Batch vs genotype") +
+  scale_color_brewer(palette = "Set1") + theme_bw()
+```
+
+5XFAD cerebral cortex expression clusters by genotype and age but not sex. The effects of genotype and age are much larger than any batch effects.
+
+## Quality plots of samples -- Hippocampus
+
+```{r Uci5x-dds-h, message=FALSE, warning=FALSE}
+meta_h <- subset(meta_vis, tissue == "hippocampus")
+counts_h <- data$counts[, meta_h$merged_file_specimenID]
+dds_h <- DESeqDataSetFromMatrix(counts_h, meta_h, design = ~ genotype)
+dds_h <- DESeq(dds_h, quiet = TRUE)
+plotDispEsts(dds_h)
+```
+
+```{r Uci5x-vst-h}
+vsd_h <- vst(dds_h, blind = FALSE)
+meanSdPlot(assay(vsd_h))
+```
+
+## PCA plots -- Hippocampus
+
+```{r Uci5x-pca-h, message=FALSE}
+plotPCA(vsd_h, intgroup = "RIN") + theme_bw() + ggtitle("RIN")
+
+plotPCA(vsd_h, intgroup = c("genotype", "sex")) + 
+  ggtitle("Genotype vs sex") +
+  scale_color_brewer(palette = "Set1") + theme_bw() 
+
+plotPCA(vsd_h, intgroup = c("genotype", "ageDeath")) + 
+  ggtitle("Genotype vs age") +
+  scale_color_brewer(palette = "Set1") + theme_bw()
+
+plotPCA(vsd_h, intgroup = c("sex", "ageDeath")) +
+  ggtitle("Sex vs age") +
+  scale_color_brewer(palette = "Set1") + theme_bw()
+
+plotPCA(vsd_h, intgroup = c("rnaBatch", "ageDeath")) +
+  ggtitle("Batch vs age") +
+  scale_color_brewer(palette = "Set1") + theme_bw()
+
+plotPCA(vsd_h, intgroup = c("rnaBatch", "genotype")) +
+  ggtitle("Batch vs genotype") +
+  scale_color_brewer(palette = "Set1") + theme_bw()
+```
+
+5XFAD hippocampus expression clusters by genotype and age but not sex, similar to the cerebral cortex. The effects of genotype and age are much larger than any batch effects. Given this, it may not be necessary to throw out samples from the NA batch for either tissue.
