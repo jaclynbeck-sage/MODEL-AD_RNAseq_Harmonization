@@ -1,0 +1,47 @@
+---
+title: "UCI_PrimaryScreen Dataset Exploration"
+author: Jaclyn Beck (Sage Bionetworks)
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Set up
+
+```{r initialize, include=FALSE}
+source("vis_utils.R")
+data <- load_data("UCI_PrimaryScreen")
+```
+
+## Study design
+
+```{r ps-design}
+meta_vis <- data$metadata %>%
+  mutate(ageDeath = paste(ageDeath, "months"))
+
+# Study design
+print(table(meta_vis$genotype, meta_vis$ageDeath, meta_vis$sex))
+```
+
+**This study does not have enough valid samples in any group** of genotype, sex, and age. This study will not be analyzed further or included in differential expression results.
+
+```{r upload, eval=FALSE, include=FALSE}
+# Code to upload this file to Synapse and add its contents to its own wiki page,
+# which makes it nicely viewable.
+library(knit2synapse)
+library(synapser)
+
+synLogin(silent = TRUE)
+
+# TODO add provenance
+createAndKnitToFileEntity(file = "UCI_PrimaryScreen_dataset.Rmd", parentId = "syn64299959", 
+                          fileName = "UCI_PrimaryScreen_dataset.Rmd",
+                          wikiName = "UCI_PrimaryScreen Dataset Exploration", 
+                          overwrite = TRUE, forceVersion = FALSE)
+
+```

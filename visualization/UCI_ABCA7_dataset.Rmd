@@ -1,0 +1,128 @@
+---
+title: "UCI_ABCA7 Dataset Exploration"
+author: Jaclyn Beck (Sage Bionetworks)
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Set up
+
+```{r initialize, include=FALSE}
+source("vis_utils.R")
+data <- load_data("UCI_ABCA7")
+```
+
+## Study design
+
+```{r abca7-design}
+meta_vis <- data$metadata %>%
+  mutate(ageDeath = paste(ageDeath, "months"))
+
+# Study design
+print(table(meta_vis$genotype, meta_vis$ageDeath, meta_vis$sex))
+```
+
+**This study does not have enough 5XFAD_noncarrier females in the 4 month group** to analyze that group. 
+
+### Check for batches
+
+4 batches present:
+
+```{r abca7-batches}
+data$metadata %>%
+  group_by(rnaBatch, libraryBatch, sequencingBatch) %>%
+  summarize(count = n(), .groups = "drop")
+```
+
+Uneven split between batches and genotypes. Batches 1 and 4 contain "5XFAD_carrier; Abca7-V1599M_homozygous" and "Abca7-V1599M_homozygous", while 2 and 3 contain 5XFAD carriers and noncarriers:
+
+```{r abca7-batches2}
+table(meta_vis$genotype, meta_vis$rnaBatch)
+```
+Batch corresponds to age:
+
+```{r abca7-batches3}
+table(meta_vis$rnaBatch, meta_vis$ageDeath)
+```
+Batches contain both sexes: 
+
+```{r abca7-batches4}
+table(meta_vis$rnaBatch, meta_vis$sex)
+```
+Within groups (sex + age), each genotype exists in exactly one batch, with each batch containing two genotypes. 
+
+```{r abca7-batches5}
+table(meta_vis$genotype, meta_vis$rnaBatch, meta_vis$sex, meta_vis$ageDeath)
+```
+
+The separation by genotype is not ideal for analysis.
+
+### Human gene expression
+
+```{r abca7-human-expression, fig.width=8}
+plt <- plot_human_genes(data$counts, data$metadata, data$symbol_map)
+print(plt)
+```
+
+### Quality plots of samples
+
+```{r abca7-deseq, message=FALSE, warning=FALSE}
+dds <- DESeqDataSetFromMatrix(data$counts, meta_vis, design = ~ genotype)
+dds <- DESeq(dds, quiet = TRUE)
+plotDispEsts(dds)
+```
+
+```{r abca7-vst}
+vsd <- vst(dds, blind = FALSE)
+meanSdPlot(assay(vsd))
+```
+
+### PCA plots
+
+```{r abca7-pca, message=FALSE, warning=FALSE}
+plotPCA(vsd, intgroup = "RIN") + theme_bw() + ggtitle("RIN")
+
+plotPCA(vsd, intgroup = c("genotype", "sex")) + 
+  ggtitle("Genotype vs sex") +
+  scale_color_brewer(palette = "Set1") + theme_bw() 
+
+plotPCA(vsd, intgroup = c("genotype", "ageDeath")) + 
+  ggtitle("Genotype vs age") +
+  scale_color_brewer(palette = "Set1") + theme_bw()
+
+plotPCA(vsd, intgroup = c("sex", "ageDeath")) +
+  ggtitle("Sex vs age") +
+  scale_color_brewer(palette = "Set1") + theme_bw()
+
+plotPCA(vsd, intgroup = c("rnaBatch", "ageDeath")) +
+  ggtitle("Batch vs age") +
+  scale_color_brewer(palette = "Set1") + theme_bw()
+
+plotPCA(vsd, intgroup = c("rnaBatch", "genotype")) +
+  ggtitle("Batch vs genotype") +
+  scale_color_brewer(palette = "Set1") + theme_bw()
+```
+
+ABCA7 samples seem to separate by whether the mouse is a 5XFAD carrier or not, with some clustering by age in the carriers. Within each age group, the effect of genotype appears far stronger than the effect of batch.
+
+```{r upload, eval=FALSE, include=FALSE}
+# Code to upload this file to Synapse and add its contents to its own wiki page,
+# which makes it nicely viewable.
+library(knit2synapse)
+library(synapser)
+
+synLogin(silent = TRUE)
+
+# TODO add provenance
+createAndKnitToFileEntity(file = "UCI_ABCA7_dataset.Rmd", parentId = "syn64299959", 
+                          fileName = "UCI_ABCA7_dataset.Rmd",
+                          wikiName = "UCI_ABCA7 Dataset Exploration", 
+                          overwrite = TRUE, forceVersion = FALSE)
+
+```

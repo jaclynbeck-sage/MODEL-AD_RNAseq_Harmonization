@@ -1,0 +1,111 @@
+---
+title: "UCI_Trem2_Cuprizone Dataset Exploration"
+author: Jaclyn Beck (Sage Bionetworks)
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Set up
+
+```{r initialize, include=FALSE}
+source("vis_utils.R")
+data <- load_data("UCI_Trem2_Cuprizone")
+```
+
+## Study design
+
+```{r cuprizone-design}
+meta_vis <- data$metadata %>%
+  mutate(ageDeath = paste(ageDeath, "months"))
+
+# Study design
+print(table(meta_vis$genotype, meta_vis$treatmentType, meta_vis$ageDeath, meta_vis$sex))
+```
+
+This study only has one age and does not have female mice.
+
+### Check for batches
+
+3 batches present:
+
+```{r cuprizone-batches}
+data$metadata %>%
+  group_by(rnaBatch, libraryBatch, sequencingBatch) %>%
+  summarize(count = n(), .groups = "drop")
+```
+
+```{r cuprizone-batches2}
+meta_vis$batch <- paste(meta_vis$rnaBatch, meta_vis$libraryBatch, sep = "/")
+table(meta_vis$genotype, meta_vis$treatmentType, meta_vis$batch)
+```
+
+Batches are split unevenly across genotypes and treatments:
+
+-   All 5XFAD_noncarriers and Trem2-R47H_NSS_homozygous mice are in batch 2
+-   All C57BL6J exist in both batches 1 and 3
+-   Control Trem2-KO are in batch 1 and 3 but cuprizone Trem2-KO are in batch 1 only
+-   Control Trem2-R47H_CSS_homozygous exist in batches 1 and 3 but cuprizone Trem2-R47H_CSS_homozygous are in batch 2
+-   Batch 3 only has 1-2 samples per group, which isn't ideal
+    -   But, batches 1 and 3 were library prepped on the same day so it might be alright to consider them as one batch
+
+### Human gene expression
+
+```{r cuprizone-human-expression, fig.width=8}
+plt <- plot_human_genes(data$counts, data$metadata, data$symbol_map)
+print(plt)
+```
+
+### Quality plots of samples
+
+```{r cuprizone-deseq, message=FALSE, warning=FALSE}
+dds <- DESeqDataSetFromMatrix(data$counts, meta_vis, design = ~ genotype)
+dds <- DESeq(dds, quiet = TRUE)
+plotDispEsts(dds)
+```
+
+```{r cuprizone-vst}
+vsd <- vst(dds, blind = FALSE)
+meanSdPlot(assay(vsd))
+```
+
+### PCA plots
+
+```{r cuprizone-pca, message=FALSE, warning=FALSE}
+plotPCA(vsd, intgroup = "RIN") + theme_bw() + ggtitle("RIN")
+
+plotPCA(vsd, intgroup = c("genotype")) + 
+  ggtitle("Genotype") +
+  scale_color_brewer(palette = "Set1") + theme_bw() 
+
+plotPCA(vsd, intgroup = c("treatmentType")) +
+  ggtitle("Treatment") +
+  scale_color_brewer(palette = "Set1") + theme_bw()
+
+plotPCA(vsd, intgroup = c("genotype", "treatmentType")) + 
+  ggtitle("Genotype vs treatment") +
+  scale_color_brewer(palette = "Set3") + theme_bw()
+```
+
+Trem2_Cuprizone samples don't seem to cluster by genotype or treatment.
+
+```{r upload, eval=FALSE, include=FALSE}
+# Code to upload this file to Synapse and add its contents to its own wiki page,
+# which makes it nicely viewable.
+library(knit2synapse)
+library(synapser)
+
+synLogin(silent = TRUE)
+
+# TODO add provenance
+createAndKnitToFileEntity(file = "UCI_Trem2_Cuprizone_dataset.Rmd", parentId = "syn64299959", 
+                          fileName = "UCI_Trem2_Cuprizone_dataset.Rmd",
+                          wikiName = "UCI_Trem2_Cuprizone Dataset Exploration", 
+                          overwrite = TRUE, forceVersion = FALSE)
+
+```

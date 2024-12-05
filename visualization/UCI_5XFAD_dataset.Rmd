@@ -125,7 +125,7 @@ plotPCA(vsd_cc, intgroup = c("rnaBatch", "genotype")) +
   scale_color_brewer(palette = "Set1") + theme_bw()
 ```
 
-5XFAD cerebral cortex expression clusters by genotype and age but not sex. The effects of genotype and age are much larger than any batch effects.
+5XFAD cerebral cortex samples cluster by genotype and age but not sex. The effects of genotype and age are much larger than any batch effects.
 
 ## Quality plots of samples -- Hippocampus
 
@@ -168,4 +168,20 @@ plotPCA(vsd_h, intgroup = c("rnaBatch", "genotype")) +
   scale_color_brewer(palette = "Set1") + theme_bw()
 ```
 
-5XFAD hippocampus expression clusters by genotype and age but not sex, similar to the cerebral cortex. The effects of genotype and age are much larger than any batch effects. Given this, it may not be necessary to throw out samples from the NA batch for either tissue.
+5XFAD hippocampus samples cluster by genotype and age but not sex, similar to the cerebral cortex. The effects of genotype and age are much larger than any batch effects. Given this, it may not be necessary to throw out samples from the NA batch for either tissue.
+
+```{r upload, eval=FALSE, include=FALSE}
+# Code to upload this file to Synapse and add its contents to its own wiki page,
+# which makes it nicely viewable.
+library(knit2synapse)
+library(synapser)
+
+synLogin(silent = TRUE)
+
+# TODO add provenance
+createAndKnitToFileEntity(file = "UCI_5XFAD_dataset.Rmd", parentId = "syn64299959",
+                          fileName = "UCI_5XFAD_dataset.Rmd",
+                          wikiName = "UCI_5XFAD Dataset Exploration",
+                          overwrite = TRUE, forceVersion = FALSE)
+
+```

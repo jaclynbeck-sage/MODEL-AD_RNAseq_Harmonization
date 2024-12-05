@@ -1,5 +1,5 @@
 ---
-title: "UCI_3xTg-AD Dataset Exploration"
+title: "UCI_hAbeta_KI Dataset Exploration"
 author: Jaclyn Beck (Sage Bionetworks)
 date: "`r Sys.Date()`"
 output:
@@ -15,12 +15,12 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ```{r initialize, include=FALSE}
 source("vis_utils.R")
-data <- load_data("UCI_3xTg-AD")
+data <- load_data("UCI_hAbeta_KI")
 ```
 
 ## Study design
 
-```{r 3xTg-design}
+```{r hAbeta-design}
 meta_vis <- data$metadata %>%
   mutate(ageDeath = paste(ageDeath, "months"))
 
@@ -28,12 +28,13 @@ meta_vis <- data$metadata %>%
 print(table(meta_vis$genotype, meta_vis$ageDeath, meta_vis$sex))
 ```
 
+**This study does not have enough WT samples for 22-month females** to analyze that group.
 
 ### Check for batches
 
 No batches present:
 
-```{r 3xTg-batches}
+```{r hAbeta-batches}
 data$metadata %>%
   group_by(rnaBatch, libraryBatch, sequencingBatch) %>%
   summarize(count = n(), .groups = "drop")
@@ -41,27 +42,27 @@ data$metadata %>%
 
 ### Human gene expression
 
-```{r 3xTg-human-expression, fig.width=8}
+```{r hAbeta-human-expression, fig.width=8}
 plt <- plot_human_genes(data$counts, data$metadata, data$symbol_map)
 print(plt)
 ```
 
 ### Quality plots of samples
 
-```{r 3xTg-deseq, message=FALSE, warning=FALSE}
+```{r hAbeta-deseq, message=FALSE, warning=FALSE}
 dds <- DESeqDataSetFromMatrix(data$counts, meta_vis, design = ~ genotype)
 dds <- DESeq(dds, quiet = TRUE)
 plotDispEsts(dds)
 ```
 
-```{r 3xTg-vst}
+```{r hAbeta-vst}
 vsd <- vst(dds, blind = FALSE)
 meanSdPlot(assay(vsd))
 ```
 
 ### PCA plots
 
-```{r 3xTg-pca, message=FALSE, warning=FALSE}
+```{r hAbeta-pca, message=FALSE, warning=FALSE}
 plotPCA(vsd, intgroup = "RIN") + theme_bw() + ggtitle("RIN")
 
 plotPCA(vsd, intgroup = c("genotype", "sex")) + 
@@ -77,7 +78,7 @@ plotPCA(vsd, intgroup = c("sex", "ageDeath")) +
   scale_color_brewer(palette = "Set1") + theme_bw()
 ```
 
-3xTg-AD samples somewhat cluster by sex, genotype, and age.
+hAbeta_KI samples don't seem to cluster by genotype, sex, or age. There appears to be some unknown variable that separates the samples into two clusters. 
 
 ```{r upload, eval=FALSE, include=FALSE}
 # Code to upload this file to Synapse and add its contents to its own wiki page,
@@ -88,9 +89,9 @@ library(synapser)
 synLogin(silent = TRUE)
 
 # TODO add provenance
-createAndKnitToFileEntity(file = "UCI_3xTg-AD_dataset.Rmd", parentId = "syn64299959",
-                          fileName = "UCI_3xTg-AD_dataset.Rmd",
-                          wikiName = "UCI_3xTg-AD Dataset Exploration",
+createAndKnitToFileEntity(file = "UCI_hAbeta_KI_dataset.Rmd", parentId = "syn64299959", 
+                          fileName = "UCI_hAbeta_KI_dataset.Rmd",
+                          wikiName = "UCI_hAbeta_KI Dataset Exploration", 
                           overwrite = TRUE, forceVersion = FALSE)
 
 ```
