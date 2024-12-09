@@ -18,6 +18,8 @@ library(synapser)
 library(synapserutils)
 library(stringr)
 
+# TODO eventually maybe most of this string matching can be done with annotations
+
 # Synapse IDs used in this script that are not in Model_AD_SynID_list.csv
 syn_study_folders_id <- "syn51132850"
 syn_nf_config_folder_id <- "syn62147114"
@@ -62,13 +64,13 @@ nf_samplesheet_names <- sapply(nf_samplesheet_files, "[[", "name")
 
 # Loop through each study folder -----------------------------------------------
 
-for (S in 1:length(study_folders)) {
-  study <- study_folders[[S]]$name
+for (folder in study_folders) {
+  study <- folder$name
   print(study)
 
   # Get all files in the study folder. The only files in there should be RSEM
   # output files. This will skip folders (like the quality control folder).
-  syn_files <- synGetChildren(study_folders[[S]]$id,
+  syn_files <- synGetChildren(folder$id,
                               includeTypes = list("file"))
   syn_files <- syn_files$asList()
 
@@ -106,8 +108,10 @@ for (S in 1:length(study_folders)) {
       next
     }
 
-    config_match <- which(grepl(study, nf_config_names))
-    samplesheet_match <- which(grepl(study, nf_samplesheet_names))
+    config_match <- which(grepl(paste0("rnaseq_", study),
+                                nf_config_names))
+    samplesheet_match <- which(grepl(paste0(study, ".*_rnaseq"),
+                                     nf_samplesheet_names))
 
     if (length(config_match) == 0 || length(samplesheet_match) == 0) {
       msg <- paste0("WARNING: either the NextFlow configuration file or the ",
@@ -124,6 +128,10 @@ for (S in 1:length(study_folders)) {
     nf_config <- nf_config_files[[config_match]]
     nf_samplesheet <- nf_samplesheet_files[[samplesheet_match]]
 
+    # the "versionNumber" column is called "currentVersion" in the CSV file due
+    # to it being named that way in the synTableQuery in Step 02. The column
+    # will stay named "currentVersion" despite using $versionNumber in the two
+    # new rows.
     provenance <- rbind(
       c(nf_config$id, nf_config$versionNumber, nf_config$name),
       c(nf_samplesheet$id, nf_samplesheet$versionNumber, nf_samplesheet$name),
@@ -131,7 +139,7 @@ for (S in 1:length(study_folders)) {
     )
 
     act <- Activity(used = paste(provenance$id,
-                                 provenance$versionNumber,
+                                 provenance$currentVersion,
                                  sep = "."))
     synSetProvenance(sf$id, act)
   }

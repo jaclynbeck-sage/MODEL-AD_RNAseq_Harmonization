@@ -17,7 +17,7 @@ library(synapser)
 library(stringr)
 library(dplyr)
 
-# Synapse IDs used in this script that are not in Model_AD_SynID_list.csv
+# Synapse IDs used in this script
 syn_metadata_file_id <- "syn61850266"
 syn_bam_files_id <- "syn63856101"
 syn_samplesheet_folder_id <- "syn62147112"
@@ -30,8 +30,6 @@ provenance_dir <- file.path("data", "provenance_manifests")
 dir.create(tmp_dir, showWarnings = FALSE)
 dir.create(samplesheet_dir, showWarnings = FALSE)
 dir.create(provenance_dir, showWarnings = FALSE)
-
-syn_ids <- read.csv(file.path("data", "Model_AD_SynID_list.csv"))
 
 meta_file <- synGet(syn_metadata_file_id, downloadLocation = tmp_dir,
                     ifcollision = "overwrite.local")
@@ -46,14 +44,13 @@ names(bam_folders) <- sapply(bam_folders, "[[", "name")
 
 # Create one sample sheet per study --------------------------------------------
 
-for (N in 1:nrow(syn_ids)) {
-  row <- syn_ids[N,]
-  print(row$Study)
-  meta_filt <- subset(metadata, study_name == row$Study) %>%
+for (study in unique(metadata$study_name)) {
+  print(study)
+  meta_filt <- subset(metadata, study_name == study) %>%
     select(individualID, specimenID)
 
   ## Get a list of all bam files -----------------------------------------------
-  bam_files <- synGetChildren(bam_folders[[row$Study]])$asList()
+  bam_files <- synGetChildren(bam_folders[[study]])$asList()
   bam_files <- as.data.frame(do.call(rbind, bam_files)) %>%
     select(name, id, versionNumber)
 
@@ -83,7 +80,7 @@ for (N in 1:nrow(syn_ids)) {
     dplyr::rename(patient = individualID, sample = specimenID)
 
   samplesheet_filename <- file.path(samplesheet_dir,
-                                    paste0(row$Study, "_samplesheet_variant_calling.csv"))
+                                    paste0(study, "_samplesheet_variant_calling.csv"))
   write.csv(lines, samplesheet_filename, row.names = FALSE, quote = FALSE)
 
 
@@ -96,7 +93,7 @@ for (N in 1:nrow(syn_ids)) {
 
   write.csv(provenance,
             file.path(provenance_dir,
-                      paste0(row$Study, "_provenance_variant_calling.csv")),
+                      paste0(study, "_provenance_variant_calling.csv")),
             row.names = FALSE, quote = FALSE)
 
 
@@ -118,7 +115,7 @@ for (N in 1:nrow(syn_ids)) {
 
   if (!all(bam_files$specimenID %in% meta_filt$specimenID)) {
     extra <- setdiff(bam_files$specimenID, meta_filt$specimenID)
-    msg <- paste("WARNING:", row$Study, "has BAM files for", length(extra),
+    msg <- paste("WARNING:", study, "has BAM files for", length(extra),
                  "specimens that do not exist in the metadata:",
                  paste(sort(extra), collapse = ", "))
     message(msg)
@@ -126,7 +123,7 @@ for (N in 1:nrow(syn_ids)) {
 
   if (!all(meta_filt$specimenID %in% bam_files$specimenID)) {
     missing <- setdiff(meta_filt$specimenID, bam_files$specimenID)
-    msg <- paste("WARNING:", row$Study, "is missing fastq files for",
+    msg <- paste("WARNING:", study, "is missing fastq files for",
                  length(missing), "specimens:",
                  paste(sort(missing), collapse = ", "))
     message(msg)

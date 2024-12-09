@@ -60,7 +60,7 @@ counts_list <- lapply(study_folders, function(study) {
   ## Loop through each RSEM file -----------------------------------------------
 
   file_contents <- lapply(study_files, function(sf) {
-    syn_file <- synGet(sf$id, downloadLocation = tmp_dir)
+    syn_file <- synGet(sf$id, downloadLocation = tmp_dir, ifcollision = "overwrite.local")
     print(syn_file$name)
 
     counts <- read.table(syn_file$path, header = TRUE, sep = "\t")
