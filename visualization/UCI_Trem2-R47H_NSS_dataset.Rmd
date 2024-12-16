@@ -16,122 +16,264 @@ knitr::opts_chunk$set(echo = TRUE)
 ```{r initialize, include=FALSE}
 source("vis_utils.R")
 data <- load_data("UCI_Trem2-R47H_NSS")
+
+# "data" includes the following items:
+#   metadata, counts = data frames containing only valid samples
+#   all_metadata, all_counts = data frames containing valid + invalid samples
+#   all_counts_norm = the all_counts matrix normalized with vst() for PCA plotting
+
+geno_shorten_list <- list("_homozygous" = "",
+                          "_carrier" = "",
+                          "noncarrier" = "WT")
+
+# For nicer printing, add "months" to the end of ageDeath, and shorten genotype names
+meta_vis <- data$metadata %>%
+  mutate(ageDeath = paste(ageDeath, ageDeathUnits),
+         genotype = shorten_genotypes(as.character(genotype), geno_shorten_list),
+         # Fix the empty level caused by removing the sample that is missing a value for sex.
+         sex = factor(sex))
+
+data$all_metadata <- data$all_metadata %>%
+  mutate(genotype = shorten_genotypes(as.character(genotype), geno_shorten_list))
 ```
+
+## Sample validation
+
+```{r print-invalid-samples}
+print_invalid_samples(data$all_metadata,
+                      columns_print = c("valid_5x_variant",
+                                        "valid_5x_expression",
+                                        "valid_trem2_r47h_variant"))
+```
+
+Sex-related gene expression
+
+```{r sex-counts-plot}
+data$all_metadata <- data$all_metadata %>%
+  mutate(sex = as.character(sex),
+         sex = ifelse(valid_sex, sex, paste(sex, "mismatch")))
+
+plot_gene_counts(data$all_metadata, data$all_counts,
+                 genes_plot = c("Xist", "Eif2s3y", "Ddx3y"),
+                 draw_boxplot = FALSE,
+                 title = "Sex-related gene expression",
+                 # aes specification
+                 x = sex, y = counts, color = sex, shape = sex)
+```
+
+The sex-mismatched sample is a mismatch because the `sex` column contains no value for that sample. The sample appears to be female but will be excluded due to missing information.
+
+PCA of all samples to see where the genotype mismatches cluster.
+
+```{r mismatch-pca, message=FALSE}
+data$all_metadata <- data$all_metadata %>%
+  mutate(valid_genotype = ifelse(valid_sex & !valid_sample, FALSE, TRUE))
+
+create_pca_plot(data$all_metadata, data$all_counts_norm,
+                title = "PCA of all samples",
+                # aes specification
+                color = valid_genotype, shape = genotype)
+```
+
+The genotype mismatched sample does appear to cluster with 5XFAD-containing samples instead of WT samples.
+
+```{r 5xfad-expression}
+plot_gene_counts(data$all_metadata, data$all_counts,
+                 genes_plot = c("APP", "PSEN1"),
+                 draw_boxplot = FALSE,
+                 title = "5XFAD gene expression",
+                 # aes specification
+                 x = genotype, y = counts, color = valid_genotype)
+```
+
+The genotype mismatched sample expresses APP and PSEN1 at levels comparable to 5XFAD carriers. It will be excluded from further analysis.
 
 ## Study design
 
-```{r trem2-design}
-meta_vis <- data$metadata %>%
-  mutate(ageDeath = paste(ageDeath, "months"),
-         sex = factor(sex))
-
-# Study design
-print(table(meta_vis$genotype, meta_vis$ageDeath, meta_vis$sex))
+```{r study-design}
+print_study_design(meta_vis, "sex", "genotype", "ageDeath")
 ```
 
 ### Check for batches
 
-7 batches present:
+Multiple batches present:
 
-```{r trem2-batches}
+```{r batches}
 data$metadata %>%
   group_by(rnaBatch, libraryBatch, sequencingBatch) %>%
   summarize(count = n(), .groups = "drop")
 ```
 
+There appear to be 4 different RNA prep batches, 4 different library prep batches, and 4 different sequencing batches, which when combined creates 7 batches.
+
 Genotypes are spread unevenly across batches:
 
-```{r trem2-batches2}
-meta_vis$batch <- paste(meta_vis$rnaBatch, meta_vis$sequencingBatch, 
-                        meta_vis$libraryBatch, sep = "/")
+```{r batches2}
+meta_vis$batch <- paste(meta_vis$rnaBatch,
+                        meta_vis$libraryBatch,
+                        meta_vis$sequencingBatch,
+                        sep = "/")
 
 table(meta_vis$batch, meta_vis$genotype)
 ```
+
 Sexes are spread among all batches:
 
-```{r trem2-batches3}
-meta_vis$batch <- paste(meta_vis$rnaBatch, meta_vis$sequencingBatch, 
-                        meta_vis$libraryBatch, sep = "/")
-
+```{r batches3}
 table(meta_vis$batch, meta_vis$sex)
 ```
+
 Batches are specific to age group:
 
-```{r trem2-batches4}
-meta_vis$batch <- paste(meta_vis$rnaBatch, meta_vis$sequencingBatch, 
-                        meta_vis$libraryBatch, sep = "/")
-
+```{r batches4}
 table(meta_vis$batch, meta_vis$ageDeath)
 ```
+
 Looking at rnaBatch only:
 
-```{r trem2-batches5}
-table(meta_vis$rnaBatch, meta_vis$genotype, meta_vis$ageDeath)
+```{r batches5}
+print_study_design(meta_vis, c("sex", "ageDeath"), "rnaBatch", "genotype")
 ```
-5XFAD_carrier and 5XFAD_noncarrier mice are in batches 1 and 4, while the remaining two genotypes are in batches 2 and 3. Pairs of genotypes from the same age are in the same batch. 
+
+5XFAD_carrier and 5XFAD_noncarrier mice are in batches together, while the other two genotypes are in a separate group of batches together.
 
 Looking at libraryBatch only:
 
-```{r trem2-batches6}
-table(meta_vis$libraryBatch, meta_vis$genotype, meta_vis$ageDeath)
+```{r batches6}
+print_study_design(meta_vis, c("sex", "ageDeath"), "libraryBatch", "genotype")
 ```
-All genotypes for 12 month mice are in batches 2 and 3. For 4 month mice, 5XFAD_carrier and 5XFAD_noncarrier are in batch 1, while the remaining two genotypes are in batch 4.
+
+Genotypes are spread evenly across 2 batches in the 12 month mice, however they are separated by pairs in the 4 month mice.
 
 Looking at sequencingBatch only:
 
-```{r trem2-batches7}
-table(meta_vis$sequencingBatch, meta_vis$genotype, meta_vis$ageDeath)
+```{r batches7}
+print_study_design(meta_vis, c("sex", "ageDeath"), "sequencingBatch", "genotype")
 ```
-All 12 month mice are in batch 3. For 4 month mice, 5XFAD_carriers are in batch 1, 5XFAD_noncarriers are in 1 and 2, and the remaining two genotypes are in batch 4.
+
+All 12 month mice are in a single batch. For 4 month mice, genotypes are split by pairs again, with 2 samples of 5XFAD_WT mice existing in a third batch by themselves.
 
 Final split of all batches by sex + age group:
 
-```{r trem2-batches8}
-table(meta_vis$batch, meta_vis$genotype, meta_vis$sex, meta_vis$ageDeath)
+```{r batches8}
+print_study_design(meta_vis, c("sex", "ageDeath"), "batch", "genotype")
 ```
 
-* For 12 month mice, the genotypes are paired as above in either batches 3-4 or 6-7, for all sexes.
-* For 4 month mice, all Trem2-R47H-containing mice are in batch 5 for both sexes, while 5XFAD_carriers are in batch 1 and 5XFAD_noncarriers are in batches 1-2 for all sexes. This kind of split by genotype isn't ideal. 
+For all ages and sexes, genotypes are split by pairs, which is not ideal and probably can't be corrected for in the 4 month mice.
 
 ### Human gene expression
 
-```{r trem2-human-expression, fig.width=8}
-plt <- plot_human_genes(data$counts, data$metadata, data$symbol_map)
-print(plt)
+```{r human-expression, fig.width=8}
+plot_gene_counts(meta_vis, data$counts,
+                 genes_plot = c("APOE", "APP", "MAPT", "PSEN1"),
+                 title = "Expression of human transgenes",
+                 # aes specification
+                 x = genotype, y = counts, color = genotype)
 ```
 
 ### Quality plots of samples
 
-```{r trem2-deseq, message=FALSE, warning=FALSE}
-dds <- DESeqDataSetFromMatrix(data$counts, meta_vis, design = ~ genotype)
+```{r deseq, message=FALSE, warning=FALSE}
+keep <- rowSums(data$counts > 10) >= 3
+dds <- DESeqDataSetFromMatrix(data$counts[keep, ], meta_vis, design = ~ 1)
 dds <- DESeq(dds, quiet = TRUE)
 plotDispEsts(dds)
 ```
 
-```{r trem2-vst}
+```{r vst}
 vsd <- vst(dds, blind = FALSE)
 meanSdPlot(assay(vsd))
 ```
 
 ### PCA plots
 
-```{r trem2-pca, message=FALSE, warning=FALSE}
-plotPCA(vsd, intgroup = "RIN") + theme_bw() + ggtitle("RIN")
+```{r pca-plots, message=FALSE, warning=FALSE}
+# DESeq2's plotPCA function forces numeric variables to be categorical, so we
+# use my function for plotting instead
+meta_vis$RIN <- as.numeric(meta_vis$RIN)
+create_pca_plot(meta_vis, assay(vsd),
+                title = "RIN",
+                discrete_color = FALSE,
+                brewer_palette = "OrRd",
+                # aes specification
+                color = RIN)
 
-plotPCA(vsd, intgroup = c("genotype", "sex")) + 
+# Boxplots of RIN vs each group
+meta_vis$group <- paste(meta_vis$sex, meta_vis$ageDeath)
+plot_grouped_boxplot(meta_vis,
+                     title = "RIN vs group",
+                     # aes specification
+                     x = group, y = RIN, color = genotype)
+
+plotPCA(vsd, intgroup = c("genotype")) +
+  ggtitle("Genotype") +
+  scale_color_brewer(palette = "Set1") + theme_bw()
+
+plotPCA(vsd, intgroup = c("sex")) +
+  ggtitle("Sex") +
+  scale_color_brewer(palette = "Set1") + theme_bw()
+
+plotPCA(vsd, intgroup = c("ageDeath")) +
+  ggtitle("Age") +
+  scale_color_brewer(palette = "Set1") + theme_bw()
+
+plotPCA(vsd, intgroup = c("genotype", "sex")) +
   ggtitle("Genotype vs sex") +
-  scale_color_brewer(palette = "Set1") + theme_bw() 
+  scale_color_brewer(palette = "Set1") + theme_bw()
 
-plotPCA(vsd, intgroup = c("genotype", "ageDeath")) + 
+plotPCA(vsd, intgroup = c("genotype", "ageDeath")) +
   ggtitle("Genotype vs age") +
   scale_color_brewer(palette = "Set1") + theme_bw()
 
 plotPCA(vsd, intgroup = c("sex", "ageDeath")) +
   ggtitle("Sex vs age") +
   scale_color_brewer(palette = "Set1") + theme_bw()
+
+# Look at whether batch effects matter within analysis groups
+vsd$analysis_group <- paste(vsd$sex, vsd$ageDeath)
+
+for (a_group in unique(vsd$analysis_group)) {
+  pca_dat <- plotPCA(vsd[, vsd$analysis_group == a_group],
+                     intgroup = c("batch", "rnaBatch", "libraryBatch",
+                                  "sequencingBatch", "genotype"),
+                     returnData = TRUE)
+
+  plt <- ggplot(pca_dat,
+                aes(x = PC1, y = PC2, shape = genotype, color = batch)) +
+    geom_point(size = 3) + theme_bw() +
+    ggtitle(paste0(a_group, ": total batch vs genotype")) +
+    scale_color_brewer(palette = "Set1")
+
+  print(plt)
+
+  plt <- ggplot(pca_dat,
+                aes(x = PC1, y = PC2, shape = genotype, color = rnaBatch)) +
+    geom_point(size = 3) + theme_bw() +
+    ggtitle(paste0(a_group, ": RNA batch vs genotype")) +
+    scale_color_brewer(palette = "Set1")
+
+  print(plt)
+
+  plt <- ggplot(pca_dat,
+                aes(x = PC1, y = PC2, shape = genotype, color = libraryBatch)) +
+    geom_point(size = 3) + theme_bw() +
+    ggtitle(paste0(a_group, ": library batch vs genotype")) +
+    scale_color_brewer(palette = "Set1")
+
+  print(plt)
+
+  plt <- ggplot(pca_dat,
+                aes(x = PC1, y = PC2, shape = genotype, color = sequencingBatch)) +
+    geom_point(size = 3) + theme_bw() +
+    ggtitle(paste0(a_group, ": sequencing batch vs genotype")) +
+    scale_color_brewer(palette = "Set1")
+
+  print(plt)
+}
+
 ```
 
-Trem2-R47H_NSS samples cluster by genotype (whether they contain 5XFAD or not) and age, but not sex.
+Trem2-R47H_NSS samples cluster by genotype (whether they contain 5XFAD or not) and age, but not sex. The 4 month mice have clear separations by batch + genotype, which can't be separated.
 
 ```{r upload, eval=FALSE, include=FALSE}
 # Code to upload this file to Synapse and add its contents to its own wiki page,
@@ -142,9 +284,10 @@ library(synapser)
 synLogin(silent = TRUE)
 
 # TODO add provenance
-createAndKnitToFileEntity(file = "UCI_Trem2-R47H_NSS_dataset.Rmd", parentId = "syn64299959", 
+createAndKnitToFileEntity(file = "UCI_Trem2-R47H_NSS_dataset.Rmd",
+                          parentId = "syn64299959",
                           fileName = "UCI_Trem2-R47H_NSS_dataset.Rmd",
-                          wikiName = "UCI_Trem2-R47H_NSS Dataset Exploration", 
-                          overwrite = TRUE, forceVersion = FALSE)
-
+                          wikiName = "UCI_Trem2-R47H_NSS Dataset Exploration",
+                          overwrite = TRUE,
+                          forceVersion = FALSE)
 ```

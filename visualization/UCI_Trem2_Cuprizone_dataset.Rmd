@@ -16,83 +16,149 @@ knitr::opts_chunk$set(echo = TRUE)
 ```{r initialize, include=FALSE}
 source("vis_utils.R")
 data <- load_data("UCI_Trem2_Cuprizone")
+
+# "data" includes the following items:
+#   metadata, counts = data frames containing only valid samples
+#   all_metadata, all_counts = data frames containing valid + invalid samples
+#   all_counts_norm = the all_counts matrix normalized with vst() for PCA plotting
+
+geno_shorten_list <- list("_homozygous" = "")
+
+# For nicer printing, add "months" to the end of ageDeath, and shorten genotype names
+meta_vis <- data$metadata %>%
+  mutate(ageDeath = paste(ageDeath, ageDeathUnits),
+         genotype = shorten_genotypes(as.character(genotype), geno_shorten_list))
+
+data$all_metadata <- data$all_metadata %>%
+  mutate(genotype = shorten_genotypes(as.character(genotype), geno_shorten_list))
+```
+
+## Sample validation
+
+```{r print-invalid-samples}
+print_invalid_samples(data$all_metadata,
+                      columns_print = c("valid_trem2_r47h_variant",
+                                        "valid_trem2_ko_espression"))
 ```
 
 ## Study design
 
-```{r cuprizone-design}
-meta_vis <- data$metadata %>%
-  mutate(ageDeath = paste(ageDeath, "months"))
-
-# Study design
-print(table(meta_vis$genotype, meta_vis$treatmentType, meta_vis$ageDeath, meta_vis$sex))
+```{r study-design}
+print_study_design(meta_vis, c("sex", "ageDeath"), "genotype", "treatmentType")
 ```
 
-This study only has one age and does not have female mice.
+This study only has one age and does not have female mice. It's unclear why there is both a `5XFAD_noncarrier` and a `C57BL5J` genotype, which should both be WT mice, but there is no `5XFAD_carrier` genotype to counterpoint the non-carriers.
 
 ### Check for batches
 
-3 batches present:
+Multiple batches present:
 
-```{r cuprizone-batches}
+```{r batches}
 data$metadata %>%
   group_by(rnaBatch, libraryBatch, sequencingBatch) %>%
   summarize(count = n(), .groups = "drop")
 ```
 
-```{r cuprizone-batches2}
+There appear to be 3 batches of RNA prep and two batches of library prep, which combined make 3 batches total.
+
+```{r batches2}
 meta_vis$batch <- paste(meta_vis$rnaBatch, meta_vis$libraryBatch, sep = "/")
 table(meta_vis$genotype, meta_vis$treatmentType, meta_vis$batch)
 ```
 
 Batches are split unevenly across genotypes and treatments:
 
--   All 5XFAD_noncarriers and Trem2-R47H_NSS_homozygous mice are in batch 2
--   All C57BL6J exist in both batches 1 and 3
--   Control Trem2-KO are in batch 1 and 3 but cuprizone Trem2-KO are in batch 1 only
--   Control Trem2-R47H_CSS_homozygous exist in batches 1 and 3 but cuprizone Trem2-R47H_CSS_homozygous are in batch 2
+-   All `5XFAD_noncarriers` and `Trem2-R47H_NSS` mice are in batch 2
+-   `C57BL6J` exist in both batches 1 and 3
+-   Control `Trem2-KO` are in batch 1 and 3 but cuprizone `Trem2-KO` are in batch 1 only
+-   Control `Trem2-R47H_CSS` exist in batches 1 and 3 but cuprizone `Trem2-R47H_CSS` are in batch 2
 -   Batch 3 only has 1-2 samples per group, which isn't ideal
     -   But, batches 1 and 3 were library prepped on the same day so it might be alright to consider them as one batch
+    
+Looking at library prep only:
+
+```{r batches3}
+table(meta_vis$genotype, meta_vis$treatmentType, meta_vis$libraryBatch)
+```
+
+There is still the odd split by treatment for `Trem2-R47H_CSS`, and the split pairings of `5XFAD_noncarrier/Trem2-R47H_NSS` and `C57BL6J/Trem2-KO`.
 
 ### Human gene expression
 
-```{r cuprizone-human-expression, fig.width=8}
-plt <- plot_human_genes(data$counts, data$metadata, data$symbol_map)
-print(plt)
+```{r human-expression, fig.width=8}
+plot_gene_counts(meta_vis, data$counts,
+                 genes_plot = c("APOE", "APP", "MAPT", "PSEN1"),
+                 title = "Expression of human transgenes",
+                 # aes specification
+                 x = genotype, y = counts, color = genotype)
 ```
+
+As expected, no samples express significant levels of the four human transgenes in the reference genome.
 
 ### Quality plots of samples
 
-```{r cuprizone-deseq, message=FALSE, warning=FALSE}
-dds <- DESeqDataSetFromMatrix(data$counts, meta_vis, design = ~ genotype)
+```{r deseq, message=FALSE, warning=FALSE}
+keep <- rowSums(data$counts > 10) >= 3
+dds <- DESeqDataSetFromMatrix(data$counts[keep, ], meta_vis, design = ~ 1)
 dds <- DESeq(dds, quiet = TRUE)
 plotDispEsts(dds)
 ```
 
-```{r cuprizone-vst}
+```{r vst}
 vsd <- vst(dds, blind = FALSE)
 meanSdPlot(assay(vsd))
 ```
 
 ### PCA plots
 
-```{r cuprizone-pca, message=FALSE, warning=FALSE}
-plotPCA(vsd, intgroup = "RIN") + theme_bw() + ggtitle("RIN")
+```{r pca-plots, message=FALSE, warning=FALSE}
+# DESeq2's plotPCA function forces numeric variables to be categorical, so we
+# use my function for plotting instead
+meta_vis$RIN <- as.numeric(meta_vis$RIN)
+create_pca_plot(meta_vis, assay(vsd),
+                title = "RIN",
+                discrete_color = FALSE,
+                brewer_palette = "OrRd",
+                # aes specification
+                color = RIN)
 
-plotPCA(vsd, intgroup = c("genotype")) + 
+# Boxplots of RIN vs each group
+plot_grouped_boxplot(meta_vis,
+                     title = "RIN vs treatment",
+                     # aes specification
+                     x = treatmentType, y = RIN, color = genotype)
+
+plotPCA(vsd, intgroup = c("genotype")) +
   ggtitle("Genotype") +
-  scale_color_brewer(palette = "Set1") + theme_bw() 
+  scale_color_brewer(palette = "Set1") + theme_bw()
 
 plotPCA(vsd, intgroup = c("treatmentType")) +
   ggtitle("Treatment") +
   scale_color_brewer(palette = "Set1") + theme_bw()
 
-plotPCA(vsd, intgroup = c("genotype", "treatmentType")) + 
+plotPCA(vsd, intgroup = c("genotype", "treatmentType")) +
   ggtitle("Genotype vs treatment") +
   scale_color_brewer(palette = "Set3") + theme_bw()
+
+vsd$analysis_group <- paste(vsd$sex, vsd$ageDeath)
+
+# Look at whether batch effects matter within analysis groups
+for (a_group in unique(vsd$analysis_group)) {
+  pca_dat <- plotPCA(vsd[, vsd$analysis_group == a_group],
+                     intgroup = c("rnaBatch", "genotype"),
+                     returnData = TRUE)
+
+  plt <- ggplot(pca_dat,
+                aes(x = PC1, y = PC2, shape = genotype, color = rnaBatch)) +
+    geom_point(size = 3) + theme_bw() +
+    ggtitle(paste0(a_group, ": batch vs genotype")) +
+    scale_color_brewer(palette = "Set1")
+
+  print(plt)
+}
 ```
 
-Trem2_Cuprizone samples don't seem to cluster by genotype or treatment.
+Trem2_Cuprizone samples don't seem to cluster by genotype or treatment, and there is no obvious bias toward RIN.
 
 ```{r upload, eval=FALSE, include=FALSE}
 # Code to upload this file to Synapse and add its contents to its own wiki page,
@@ -103,9 +169,10 @@ library(synapser)
 synLogin(silent = TRUE)
 
 # TODO add provenance
-createAndKnitToFileEntity(file = "UCI_Trem2_Cuprizone_dataset.Rmd", parentId = "syn64299959", 
+createAndKnitToFileEntity(file = "UCI_Trem2_Cuprizone_dataset.Rmd",
+                          parentId = "syn64299959",
                           fileName = "UCI_Trem2_Cuprizone_dataset.Rmd",
-                          wikiName = "UCI_Trem2_Cuprizone Dataset Exploration", 
-                          overwrite = TRUE, forceVersion = FALSE)
-
+                          wikiName = "UCI_Trem2_Cuprizone Dataset Exploration",
+                          overwrite = TRUE,
+                          forceVersion = FALSE)
 ```

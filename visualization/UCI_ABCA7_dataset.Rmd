@@ -16,84 +16,184 @@ knitr::opts_chunk$set(echo = TRUE)
 ```{r initialize, include=FALSE}
 source("vis_utils.R")
 data <- load_data("UCI_ABCA7")
+
+# "data" includes the following items:
+#   metadata, counts = data frames containing only valid samples
+#   all_metadata, all_counts = data frames containing valid + invalid samples
+#   all_counts_norm = the all_counts matrix normalized with vst() for PCA plotting
+
+geno_shorten_list <- list("_carrier" = "",
+                          "-V1599M_homozygous" = "",
+                          "5XFAD_noncarrier" = "WT")
+
+# For nicer printing, add "months" to the end of ageDeath, and shorten genotype names
+meta_vis <- data$metadata %>%
+  mutate(ageDeath = paste(ageDeath, ageDeathUnits),
+         genotype = shorten_genotypes(as.character(genotype), geno_shorten_list))
+
+data$all_metadata <- data$all_metadata %>%
+  mutate(genotype = shorten_genotypes(as.character(genotype), geno_shorten_list))
 ```
+
+## Sample validation
+
+```{r print-invalid-samples}
+print_invalid_samples(data$all_metadata,
+                      columns_print = c("valid_abca7_variant",
+                                        "valid_5x_variant",
+                                        "valid_5x_expression"))
+```
+
+PCA of all samples to see where the mismatch clusters.
+
+```{r mismatch-pca, message=FALSE}
+create_pca_plot(data$all_metadata,data$all_counts_norm,
+                title = "PCA of all samples",
+                # aes specification
+                color = valid_sample, shape = genotype)
+```
+
+The mismatched sample clusters with other 5XFAD non-carriers.
+
+Expression of APP and PSEN1 in all carrier samples plus the mismatched sample to see how the mismatched non-carrier compares.
+
+```{r carrier-expression}
+carriers <- subset(data$all_metadata,
+                   grepl("5XFAD", genotype) | !valid_sample)
+carriers <- carriers$merged_file_specimenID
+
+plot_gene_counts(data$all_metadata, data$all_counts[, carriers],
+                 genes_plot = c("APP", "PSEN1"),
+                 draw_boxplot = FALSE,
+                 title = "Expression in carriers vs mismatched non-carrier",
+                 # aes specification
+                 x = valid_sample, y = counts, color = valid_sample)
+```
+
+Expression of APP and PSEN1 in all non-carrier samples to see how the mismatched non-carrier compares.
+
+```{r nc-expression}
+noncarriers <- subset(data$all_metadata, !grepl("5XFAD", genotype))
+noncarriers <- noncarriers$merged_file_specimenID
+
+plot_gene_counts(data$all_metadata, data$all_counts[, noncarriers],
+                 genes_plot = c("APP", "PSEN1"),
+                 draw_boxplot = FALSE,
+                 title = "Expression in non-carriers",
+                 # aes specification
+                 x = valid_sample, y = counts, color = valid_sample)
+```
+
+This mismatched sample is borderline: all 6 5X variants were detected in this sample via genotype calling, but it expresses APP and PSEN1 at far lower levels than any other carrier sample. However, the expression of both genes, APP especially, is noticeably higher in this sample than all other non-carriers in the data set too. Given the ambiguity, we exclude this sample to be safe.
+
+The non-carrier sample that expresses ~100 counts of APP needs investigation as well.
 
 ## Study design
 
-```{r abca7-design}
-meta_vis <- data$metadata %>%
-  mutate(ageDeath = paste(ageDeath, "months"))
-
-# Study design
-print(table(meta_vis$genotype, meta_vis$ageDeath, meta_vis$sex))
+```{r study-design}
+print_study_design(meta_vis, "sex", "genotype", "ageDeath")
 ```
 
-**This study does not have enough 5XFAD_noncarrier females in the 4 month group** to analyze that group. 
+**This study does not have enough WT (5XFAD_noncarrier) females in the 4 month group** to analyze that group.
 
 ### Check for batches
 
 4 batches present:
 
-```{r abca7-batches}
+```{r batches}
 data$metadata %>%
   group_by(rnaBatch, libraryBatch, sequencingBatch) %>%
   summarize(count = n(), .groups = "drop")
 ```
 
-Uneven split between batches and genotypes. Batches 1 and 4 contain "5XFAD_carrier; Abca7-V1599M_homozygous" and "Abca7-V1599M_homozygous", while 2 and 3 contain 5XFAD carriers and noncarriers:
+These were all sequenced in the same batch but RNA prep was done in different batches. Uneven split between RNA batches and genotypes. Batches 1 and 4 contain "5XFAD_carrier; Abca7-V1599M_homozygous" and "Abca7-V1599M_homozygous", while 2 and 3 contain 5XFAD carriers and noncarriers:
 
-```{r abca7-batches2}
+```{r batches2}
 table(meta_vis$genotype, meta_vis$rnaBatch)
 ```
+
 Batch corresponds to age:
 
-```{r abca7-batches3}
+```{r batches3}
 table(meta_vis$rnaBatch, meta_vis$ageDeath)
 ```
+
 Batches contain both sexes: 
 
-```{r abca7-batches4}
+```{r batches4}
 table(meta_vis$rnaBatch, meta_vis$sex)
 ```
+
 Within groups (sex + age), each genotype exists in exactly one batch, with each batch containing two genotypes. 
 
-```{r abca7-batches5}
-table(meta_vis$genotype, meta_vis$rnaBatch, meta_vis$sex, meta_vis$ageDeath)
+```{r batches5}
+print_study_design(meta_vis, c("sex", "ageDeath"), "genotype", "rnaBatch")
 ```
 
-The separation by genotype is not ideal for analysis.
+The separation by genotype during RNA prep is not ideal for analysis, although it may be alright since everything was sequenced in the same batch.
 
 ### Human gene expression
 
-```{r abca7-human-expression, fig.width=8}
-plt <- plot_human_genes(data$counts, data$metadata, data$symbol_map)
-print(plt)
+```{r human-expression, fig.width=8}
+plot_gene_counts(meta_vis, data$counts,
+                 genes_plot = c("APOE", "APP", "MAPT", "PSEN1"),
+                 title = "Expression of human transgenes",
+                 # aes specification
+                 x = genotype, y = counts, color = genotype)
 ```
+
+The sample that expresses higher counts of APOE should be investigated.
 
 ### Quality plots of samples
 
-```{r abca7-deseq, message=FALSE, warning=FALSE}
-dds <- DESeqDataSetFromMatrix(data$counts, meta_vis, design = ~ genotype)
+```{r deseq, message=FALSE, warning=FALSE}
+keep <- rowSums(data$counts > 10) >= 3
+dds <- DESeqDataSetFromMatrix(data$counts[keep, ], meta_vis, design = ~ 1)
 dds <- DESeq(dds, quiet = TRUE)
 plotDispEsts(dds)
 ```
 
-```{r abca7-vst}
-vsd <- vst(dds, blind = FALSE)
+```{r vst}
+vsd <- vst(dds)
 meanSdPlot(assay(vsd))
 ```
 
 ### PCA plots
 
-```{r abca7-pca, message=FALSE, warning=FALSE}
-plotPCA(vsd, intgroup = "RIN") + theme_bw() + ggtitle("RIN")
+```{r pca-plots, message=FALSE, warning=FALSE}
+# DESeq2's plotPCA function forces numeric variables to be categorical, so we
+# use my function for plotting instead
+meta_vis$RIN <- as.numeric(meta_vis$RIN)
+create_pca_plot(meta_vis, assay(vsd),
+                title = "RIN",
+                discrete_color = FALSE,
+                brewer_palette = "OrRd",
+                # aes specification
+                color = RIN)
 
-plotPCA(vsd, intgroup = c("genotype", "sex")) + 
+# Boxplots of RIN vs each group
+meta_vis$group <- paste(meta_vis$sex, meta_vis$ageDeath)
+plot_grouped_boxplot(meta_vis,
+                     title = "RIN vs group",
+                     # aes specification
+                     x = group, y = RIN, color = genotype)
+
+vsd$has_5x <- ifelse(grepl("5XFAD", vsd$genotype), TRUE, FALSE)
+
+plotPCA(vsd, intgroup = c("genotype", "sex")) +
   ggtitle("Genotype vs sex") +
-  scale_color_brewer(palette = "Set1") + theme_bw() 
+  scale_color_brewer(palette = "Set1") + theme_bw()
 
-plotPCA(vsd, intgroup = c("genotype", "ageDeath")) + 
+plotPCA(vsd, intgroup = c("genotype", "ageDeath")) +
   ggtitle("Genotype vs age") +
+  scale_color_brewer(palette = "Set1") + theme_bw()
+
+plotPCA(vsd, intgroup = c("has_5x", "sex")) +
+  ggtitle("Presence of 5XFAD vs sex") +
+  scale_color_brewer(palette = "Set1") + theme_bw()
+
+plotPCA(vsd, intgroup = c("has_5x", "ageDeath")) +
+  ggtitle("Presence of 5XFAD vs age") +
   scale_color_brewer(palette = "Set1") + theme_bw()
 
 plotPCA(vsd, intgroup = c("sex", "ageDeath")) +
@@ -107,9 +207,30 @@ plotPCA(vsd, intgroup = c("rnaBatch", "ageDeath")) +
 plotPCA(vsd, intgroup = c("rnaBatch", "genotype")) +
   ggtitle("Batch vs genotype") +
   scale_color_brewer(palette = "Set1") + theme_bw()
+
+plotPCA(vsd, intgroup = c("rnaBatch", "has_5x")) +
+  ggtitle("Batch vs presence of 5XFAD") +
+  scale_color_brewer(palette = "Set1") + theme_bw()
+
+vsd$analysis_group <- paste(vsd$sex, vsd$ageDeath)
+
+# Look at whether batch effects matter within analysis groups
+for (a_group in unique(vsd$analysis_group)) {
+  pca_dat <- plotPCA(vsd[, vsd$analysis_group == a_group],
+                     intgroup = c("rnaBatch", "genotype"),
+                     returnData = TRUE)
+
+  plt <- ggplot(pca_dat,
+                aes(x = PC1, y = PC2, shape = genotype, color = rnaBatch)) +
+    geom_point(size = 3) + theme_bw() +
+    ggtitle(paste0(a_group, ": batch vs genotype")) +
+    scale_color_brewer(palette = "Set1")
+
+  print(plt)
+}
 ```
 
-ABCA7 samples seem to separate by whether the mouse is a 5XFAD carrier or not, with some clustering by age in the carriers. Within each age group, the effect of genotype appears far stronger than the effect of batch.
+ABCA7 samples seem to separate by whether the mouse is a 5XFAD carrier or not, with some clustering by age in the carriers. Within each age group, batch effects appear minimal.
 
 ```{r upload, eval=FALSE, include=FALSE}
 # Code to upload this file to Synapse and add its contents to its own wiki page,
@@ -120,9 +241,10 @@ library(synapser)
 synLogin(silent = TRUE)
 
 # TODO add provenance
-createAndKnitToFileEntity(file = "UCI_ABCA7_dataset.Rmd", parentId = "syn64299959", 
+createAndKnitToFileEntity(file = "UCI_ABCA7_dataset.Rmd",
+                          parentId = "syn64299959",
                           fileName = "UCI_ABCA7_dataset.Rmd",
-                          wikiName = "UCI_ABCA7 Dataset Exploration", 
-                          overwrite = TRUE, forceVersion = FALSE)
-
+                          wikiName = "UCI_ABCA7 Dataset Exploration",
+                          overwrite = TRUE,
+                          forceVersion = FALSE)
 ```

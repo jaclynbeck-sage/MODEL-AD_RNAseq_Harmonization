@@ -9,15 +9,15 @@ library(ggplot2)
 
 # Synapse IDs used in this script -- merged metadata and the gene counts file
 # with data from all studies
-syn_metadata_file_id <- "syn61850266.3"
-syn_gene_counts_id <- "syn62690577.1"
-syn_symbol_map_id <- "syn62063692.1"
-syn_genotype_folder_id <- "syn63913842" # Temporarily in staging folder
+syn_metadata_file_id <- "syn61850266"
+syn_gene_counts_id <- "syn62690577"
+syn_symbol_map_id <- "syn62063692"
+syn_genotype_folder_id <- "syn63913842"
 # TODO put intervals.bed file on Synapse
 
 synLogin()
 
-github <- "https://github.com/jaclynbeck-sage/MODEL-AD_RNAseq_Harmonization/blob/main/05_Sample_Validation.Rmd"
+github <- "https://github.com/jaclynbeck-sage/MODEL-AD_RNAseq_Harmonization/blob/main/06_Sample_Validation.Rmd"
 tmp_dir <- file.path("data", "tmp")
 
 
@@ -134,9 +134,9 @@ print_expression_mismatches <- function(mismatch_df, genotype_name) {
 
 # Load counts and metadata -----------------------------------------------------
 
-metadata_file <- synGet(syn_metadata_file_id, downloadLocation = tmp_dir)
-counts_file <- synGet(syn_gene_counts_id, downloadLocation = tmp_dir)
-symbol_map_file <- synGet(syn_symbol_map_id, downloadLocation = tmp_dir)
+metadata_file <- synGet(syn_metadata_file_id, downloadLocation = tmp_dir, ifcollision = "overwrite.local")
+counts_file <- synGet(syn_gene_counts_id, downloadLocation = tmp_dir, ifcollision = "overwrite.local")
+symbol_map_file <- synGet(syn_symbol_map_id, downloadLocation = tmp_dir, ifcollision = "overwrite.local")
 
 metadata_all <- read.csv(metadata_file$path)
 counts <- read.delim(counts_file$path, header = TRUE, row.names = 1) %>%
@@ -417,8 +417,11 @@ valid_samples$valid_3x_expression <- !(valid_samples$merged_file_specimenID %in%
 studies_apoe <- subset(metadata_all, grepl("APOE4-KI", genotype))
 meta_apoe <- subset(metadata_all, study_name %in% studies_apoe$study_name)
 df_apoe <- make_counts_df(meta_apoe, counts, symbol_map, "APOE") %>%
-  # Using > 1 CPM is sufficient for this genotype -- TODO might need to raise this to 2 CPM
-  mutate(expr_apoe = APOE > 1)
+  # We need to use > 2 CPM as a threshold for this genotype: there are a few
+  # non-carrier samples with > 1 but < 2 CPM expression that seem to match other
+  # non-carriers and clearly don't match carriers in expression of mouse APOE,
+  # so these are probably true non-carriers.
+  mutate(expr_apoe = APOE > 2)
 
 valid_apoe <- subset(df_apoe, (grepl("APOE4-KI_(homo|hetero)", genotype) & expr_apoe) |
                      (!grepl("APOE4-KI_(homo|hetero)", genotype) & !expr_apoe))
@@ -464,10 +467,11 @@ variants_abca7 <- get_variant_mismatches(metadata_all, geno_info,
 # study seems to have less sequencing depth than other studies, and the
 # expression of Abca7 is much lower across all samples in that study than in the
 # UCI_ABCA7 study, so it's possible that there wasn't enough coverage to hit the
-# target region in this sample. We ignore carrier mismatches because of this
-# since we can't verify they are actually mismatches.
+# target region in this sample. The UCI_PrimaryScreen study is excluded from
+# further analysis so we will keep stringent validation criteria and re-evaluate
+# if another study with Abca7 mutants gets added.
 variants_merge_abca7 <- variants_abca7 %>%
-  mutate(valid_abca7_variant = is_carrier  |
+  mutate(valid_abca7_variant = (is_carrier & est_genotype == "carrier") |
            (!is_carrier & est_genotype != "carrier")) %>%
   select(merged_file_specimenID, valid_abca7_variant)
 
@@ -488,10 +492,10 @@ variants_abi3 <- get_variant_mismatches(metadata_all, geno_info,
                                         mutation_match = "Abi3-S212F",
                                         total_positions = 3)
 
-# Same concept as Abca7 validation: Only one carrier sample had a detected Abi3
-# variant. Given the relatively low expression of Abi3 across samples, so we do
-# not assume that carrier mismatches are actual mismatches since it's possible
-# there just wasn't enough coverage to hit the target region.
+# Only one carrier sample had a detected Abi3 variant. Given the relatively low
+# expression of Abi3 across samples, so we do not assume that carrier mismatches
+# are actual mismatches since it's possible there just wasn't enough coverage to
+# hit the target region.
 variants_merge_abi3 <- variants_abi3 %>%
   mutate(valid_abi3_variant = is_carrier  |
            (!is_carrier & est_genotype != "carrier")) %>%
@@ -532,11 +536,12 @@ print_variant_mismatches(var_mismatches_abeta, "hAbeta-KI")
 
 ## Picalm-H458R ----------------------------------------------------------------
 
-# Variant for Picalm-H458R seems to be unreliable, as the variant is being
-# detected in only one of the Picalm samples but deletions at that location are
-# found for multiple samples from unrelated studies. Therefore we will not
-# validate based on variant calling. It may be difficult to detect that variant
-# because it is 3 consecutive base changes.
+# Variant for Picalm-H458R on the UCI_PrimaryScreen study seems to be
+# unreliable, as the variant is being detected in only one of the Picalm samples
+# but deletions at that location are found for multiple samples from unrelated
+# studies. Therefore we will not validate based on variant calling. It may be
+# difficult to detect that variant because it is 3 consecutive base changes. We
+# will re-evaluate if a larger Picalm study gets added.
 
 # Additionally, there is a small difference between genotypes (~2 CPM) but not
 # enough to be able to confidently validate by expression, so we currently have
@@ -581,10 +586,14 @@ variants_trem2 <- get_variant_mismatches(metadata_all, geno_info,
 
 
 # There are 9 carrier samples (homo- or heterozygous) with detected variants but
-# low quality, and another 6 carriers with no detected variants at all. Due to
-# the generally low expression of Trem2 across all samples, it's possible there
-# wasn't enough coverage to hit the target region enough, so we do not consider
-# carrier mismatches as true mismatches.
+# low quality, and another 4 carriers with no detected variants at all. The
+# breakdown is:
+#   low quality: 8 Jax.IU.Pitt_APOE4.Trem2.R47H, 1 UCI_PrimaryScreen
+#   no detected variants: 1 Jax.IU.Pitt_APOE4.Trem2.R47H, 3 UCI_PrimaryScreen
+#
+# Due to the generally low expression of Trem2 across all samples, it's possible
+# there wasn't enough coverage to hit the target region enough, so we do not
+# consider carrier mismatches as true mismatches.
 variants_merge_trem2 <- variants_trem2 %>%
   mutate(valid_trem2_r47h_variant = is_carrier |
            (!is_carrier & est_genotype != "carrier")) %>%

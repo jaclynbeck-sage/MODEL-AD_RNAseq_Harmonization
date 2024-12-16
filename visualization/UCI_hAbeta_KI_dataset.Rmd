@@ -16,16 +16,52 @@ knitr::opts_chunk$set(echo = TRUE)
 ```{r initialize, include=FALSE}
 source("vis_utils.R")
 data <- load_data("UCI_hAbeta_KI")
+
+# "data" includes the following items:
+#   metadata, counts = data frames containing only valid samples
+#   all_metadata, all_counts = data frames containing valid + invalid samples
+#   all_counts_norm = the all_counts matrix normalized with vst() for PCA plotting
+
+geno_shorten_list <- list("_LoxP_homozygous" = "",
+                          "KI_LoxP_WT" = "WT")
+
+# For nicer printing, add "months" to the end of ageDeath, and shorten genotype names
+meta_vis <- data$metadata %>%
+  mutate(ageDeath = paste(ageDeath, ageDeathUnits),
+         genotype = shorten_genotypes(as.character(genotype), geno_shorten_list))
+
+data$all_metadata <- data$all_metadata %>%
+  mutate(genotype = shorten_genotypes(as.character(genotype), geno_shorten_list))
 ```
+
+## Sample validation
+
+```{r print-invalid-samples}
+print_invalid_samples(data$all_metadata,
+                      columns_print = c("valid_abeta_ki_variant"))
+```
+
+Sex-related gene expression
+
+```{r sex-counts-plot}
+data$all_metadata <- data$all_metadata %>%
+  mutate(sex = as.character(sex),
+         sex = ifelse(valid_sex, sex, paste(sex, "mismatch")))
+
+plot_gene_counts(data$all_metadata, data$all_counts,
+                 genes_plot = c("Xist", "Eif2s3y", "Ddx3y"),
+                 draw_boxplot = FALSE,
+                 title = "Sex-related gene expression",
+                 # aes specification
+                 x = sex, y = counts, color = sex, shape = sex)
+```
+
+The mismatched sample is clearly expressing male-related genes and will be excluded from analysis.
 
 ## Study design
 
-```{r hAbeta-design}
-meta_vis <- data$metadata %>%
-  mutate(ageDeath = paste(ageDeath, "months"))
-
-# Study design
-print(table(meta_vis$genotype, meta_vis$ageDeath, meta_vis$sex))
+```{r study-design}
+print_study_design(meta_vis, "sex", "genotype", "ageDeath")
 ```
 
 **This study does not have enough WT samples for 22-month females** to analyze that group.
@@ -34,7 +70,7 @@ print(table(meta_vis$genotype, meta_vis$ageDeath, meta_vis$sex))
 
 No batches present:
 
-```{r hAbeta-batches}
+```{r batches}
 data$metadata %>%
   group_by(rnaBatch, libraryBatch, sequencingBatch) %>%
   summarize(count = n(), .groups = "drop")
@@ -42,34 +78,77 @@ data$metadata %>%
 
 ### Human gene expression
 
-```{r hAbeta-human-expression, fig.width=8}
-plt <- plot_human_genes(data$counts, data$metadata, data$symbol_map)
-print(plt)
+```{r human-expression, fig.width=8}
+plot_gene_counts(meta_vis, data$counts,
+                 genes_plot = c("APOE", "APP", "MAPT", "PSEN1"),
+                 title = "Expression of human transgenes",
+                 # aes specification
+                 x = genotype, y = counts, color = genotype)
+```
+
+As expected, no samples express significant levels of the four human transgenes in the reference genome. The Abeta KI in this mouse model is 3 point mutations of mouse *App*, not a full knock-in of human APP.
+
+Mouse *App* expression:
+
+```{r mouse-app-expression, fig.width=8}
+plot_gene_counts(meta_vis, data$counts,
+                 genes_plot = c("App"),
+                 title = "Expression of mouse App",
+                 # aes specification
+                 x = genotype, y = counts, color = genotype)
 ```
 
 ### Quality plots of samples
 
-```{r hAbeta-deseq, message=FALSE, warning=FALSE}
-dds <- DESeqDataSetFromMatrix(data$counts, meta_vis, design = ~ genotype)
+```{r deseq, message=FALSE, warning=FALSE}
+keep <- rowSums(data$counts > 10) >= 3
+dds <- DESeqDataSetFromMatrix(data$counts[keep, ], meta_vis, design = ~ 1)
 dds <- DESeq(dds, quiet = TRUE)
 plotDispEsts(dds)
 ```
 
-```{r hAbeta-vst}
-vsd <- vst(dds, blind = FALSE)
+```{r vst}
+vsd <- vst(dds)
 meanSdPlot(assay(vsd))
 ```
 
 ### PCA plots
 
-```{r hAbeta-pca, message=FALSE, warning=FALSE}
-plotPCA(vsd, intgroup = "RIN") + theme_bw() + ggtitle("RIN")
+```{r pca-plots, message=FALSE, warning=FALSE}
+# DESeq2's plotPCA function forces numeric variables to be categorical, so we
+# use my function for plotting instead
+meta_vis$RIN <- as.numeric(meta_vis$RIN)
+create_pca_plot(meta_vis, assay(vsd),
+                title = "RIN",
+                discrete_color = FALSE,
+                brewer_palette = "OrRd",
+                # aes specification
+                color = RIN)
 
-plotPCA(vsd, intgroup = c("genotype", "sex")) + 
+# Boxplots of RIN vs each group
+meta_vis$group <- paste(meta_vis$sex, meta_vis$ageDeath)
+plot_grouped_boxplot(meta_vis,
+                     title = "RIN vs group",
+                     # aes specification
+                     x = group, y = RIN, color = genotype)
+
+plotPCA(vsd, intgroup = c("genotype")) +
+  ggtitle("Genotype") +
+  scale_color_brewer(palette = "Set1") + theme_bw()
+
+plotPCA(vsd, intgroup = c("sex")) +
+  ggtitle("Sex") +
+  scale_color_brewer(palette = "Set1") + theme_bw()
+
+plotPCA(vsd, intgroup = c("ageDeath")) +
+  ggtitle("Age") +
+  scale_color_brewer(palette = "Set1") + theme_bw()
+
+plotPCA(vsd, intgroup = c("genotype", "sex")) +
   ggtitle("Genotype vs sex") +
-  scale_color_brewer(palette = "Set1") + theme_bw() 
+  scale_color_brewer(palette = "Set1") + theme_bw()
 
-plotPCA(vsd, intgroup = c("genotype", "ageDeath")) + 
+plotPCA(vsd, intgroup = c("genotype", "ageDeath")) +
   ggtitle("Genotype vs age") +
   scale_color_brewer(palette = "Set1") + theme_bw()
 
@@ -78,7 +157,7 @@ plotPCA(vsd, intgroup = c("sex", "ageDeath")) +
   scale_color_brewer(palette = "Set1") + theme_bw()
 ```
 
-hAbeta_KI samples don't seem to cluster by genotype, sex, or age. There appears to be some unknown variable that separates the samples into two clusters. 
+hAbeta_KI samples don't seem to cluster by genotype, sex, age, or RIN. There appears to be some unknown variable that separates the samples into roughly two clusters. There is no other variable in the available metadata that has multiple groups in it.
 
 ```{r upload, eval=FALSE, include=FALSE}
 # Code to upload this file to Synapse and add its contents to its own wiki page,
@@ -89,9 +168,10 @@ library(synapser)
 synLogin(silent = TRUE)
 
 # TODO add provenance
-createAndKnitToFileEntity(file = "UCI_hAbeta_KI_dataset.Rmd", parentId = "syn64299959", 
+createAndKnitToFileEntity(file = "UCI_hAbeta_KI_dataset.Rmd",
+                          parentId = "syn64299959",
                           fileName = "UCI_hAbeta_KI_dataset.Rmd",
-                          wikiName = "UCI_hAbeta_KI Dataset Exploration", 
-                          overwrite = TRUE, forceVersion = FALSE)
-
+                          wikiName = "UCI_hAbeta_KI Dataset Exploration",
+                          overwrite = TRUE,
+                          forceVersion = FALSE)
 ```

@@ -1,0 +1,262 @@
+---
+title: "Jax.IU.Pitt_APOE4.Trem2.R47H Dataset Exploration"
+author: "Jaclyn Beck (Sage Bionetworks)"
+date: "`r Sys.Date()`"
+output:
+  html_document: 
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r initialize, message=FALSE, include=FALSE}
+source("vis_utils.R")
+data <- load_data("Jax.IU.Pitt_APOE4.Trem2.R47H")
+
+# "data" includes the following items:
+#   metadata, counts = data frames containing only valid samples
+#   all_metadata, all_counts = data frames containing valid + invalid samples
+#   all_counts_norm = the all_counts matrix normalized with vst() for PCA plotting
+
+# For this study, we drop the two Trem2-R47H_heterozygous samples and drop all
+# samples with NA genotypes.
+data$metadata <- subset(data$metadata,
+                        !is.na(genotype) & !grepl("heterozygous", genotype))
+
+data$counts <- data$counts[, data$metadata$merged_file_specimenID]
+```
+
+## Sample validation
+
+```{r print-invalid-samples}
+print_invalid_samples(data$all_metadata,
+                      columns_print = c("valid_apoe", "valid_trem2_r47h_variant"))
+```
+
+Note that the `NA` genotypes are thrown out by default, whether or not they have a mismatch. The APOE and Trem2 variant validation assumes `NA` genotypes do not express either variant, which is why they are `TRUE`. 
+
+There are effectively no mismatches for this study after `NA` genotypes are thrown out.
+
+## Study design
+
+```{r study-design}
+geno_shorten_list <- list("_homozygous" = "",
+                          "APOE4-KI_WT" = "APOE4-WT",
+                          "Trem2-R47H_WT" = "Trem2-WT")
+
+meta_vis <- data$metadata %>%
+  # Fix ageDeath to match the groups specified in the study methods (4, 8, 12,
+  # and 24 months). This doesn't exactly make sense with the reported ageDeath,
+  # as the "8"-month mice span 7-10 months, the "12" months span 13-16 months,
+  # and the "24" months span 24-28 months.
+  mutate(ageDeath = case_when(ageDeath <= 4 ~ 4,
+                              ageDeath > 4 & ageDeath < 11 ~ 8,
+                              ageDeath > 11 & ageDeath < 20 ~ 12,
+                              ageDeath > 20 ~ 24,
+                              .default = ageDeath),
+         ageDeath = factor(paste(ageDeath, "months"),
+                           levels = c("4 months", "8 months", "12 months", "24 months")),
+         # Shorten long genotype names for display
+         genotype = shorten_genotypes(as.character(genotype), geno_shorten_list))
+
+# Study design
+print_study_design(meta_vis, "sex", "genotype", "ageDeath")
+```
+
+I believe this data might contain two separate studies given the unevenness of sample size, so I need to investigate where the split is.
+
+## Check for batches
+
+4 batches present:
+
+```{r batches}
+data$metadata %>%
+  group_by(rnaBatch, libraryBatch, sequencingBatch) %>%
+  summarize(count = n(), .groups = "drop")
+```
+
+Each batch contains all genotypes:
+
+```{r batches2}
+meta_vis <- meta_vis %>%
+  mutate(batch = sequencingBatch)
+
+table(meta_vis$batch, meta_vis$genotype)
+```
+
+Each batch contains both sexes:
+
+```{r batches3}
+table(meta_vis$batch, meta_vis$sex)
+```
+
+Each batch contains most ages, except that all 24 month mice are in one batch:
+
+```{r batches4}
+table(meta_vis$batch, meta_vis$ageDeath)
+```
+
+Explore batches within each age/sex grouping.
+
+```{r batches5}
+meta_vis <- meta_vis %>%
+  mutate(group = paste(sex, ageDeath))
+
+print_study_design(meta_vis, "group", "genotype", "batch")
+```
+
+Within each age/sex grouping, genotypes are fairly well spread between batches, with a few exceptions:
+
+* At least one batch in every age group (except 24 months) has only 1 sample of one of the genotypes
+* 4 month females have one batch with every genotype, but the other batches have only one genotype each or 1 sample of a genotype. 
+* 8 month females have a batch (`19-model-ad-008`) that contains only one sample.
+* 12 month males: all APOE4-WT/Trem2-R47H samples are in `run3`, which only contains 1 sample from another genotype
+
+What does the study design look like if we drop all samples that are singletons in a batch?
+
+```{r drop-singletons}
+batch_counts <- meta_vis %>%
+  group_by(group, genotype, batch) %>%
+  summarize(count = n(), .groups = "drop")
+
+singletons <- subset(batch_counts, count == 1) %>%
+  mutate(id = paste(group, genotype, batch))
+
+meta_dropped <- meta_vis %>%
+  mutate(id = paste(group, genotype, batch)) %>%
+  subset(!(id %in% singletons$id))
+
+print_study_design(meta_dropped, "group", "genotype", "batch")
+```
+
+* Male 4 months is potentially an issue, all `APOE4-WT/Trem2-R47H` are in one batch
+  * However that batch contains all genotypes with sufficient numbers of samples to analyze on its own, so it's still usable data
+  * Same idea with female 4 month mice
+* **Male 8 months is still an issue**, all `APOE4-KI/Trem2-WT` are in one batch, and that batch doesn't have all genotypes in it
+* **Male 12 months is still an issue**, all `APOE4-KI/Trem2-WT` and `APOE4-WT/Trem2-WT` are in one batch, while all `APOE4-WT/Trem2-R47H` are in a separate batch
+* **Female 12 months has the same issue** as Male 8 months
+
+## Human gene expression
+
+```{r human-expression, fig.width=8}
+plot_gene_counts(meta_vis, data$counts,
+                 genes_plot = c("APOE", "APP", "MAPT", "PSEN1"),
+                 title = "Expression of human transgenes",
+                 # aes specification
+                 x = genotype, y = counts, color = genotype)
+```
+
+## Quality plots of samples
+
+```{r deseq, message=FALSE, warning=FALSE}
+keep <- rowSums(data$counts > 10) >= 3
+dds <- DESeqDataSetFromMatrix(data$counts[keep, ], meta_vis, design = ~ 1)
+dds <- DESeq(dds, quiet = TRUE)
+plotDispEsts(dds)
+```
+
+```{r vst}
+vsd <- vst(dds)
+meanSdPlot(assay(vsd))
+```
+
+## PCA plots
+
+```{r pca-plots, message=FALSE, warning=FALSE}
+plotPCA(vsd, intgroup = "genotype") +
+  ggtitle("Genotype") +
+  scale_color_brewer(palette = "Set1") + theme_bw()
+
+plotPCA(vsd, intgroup = "sex") +
+  ggtitle("Sex") +
+  scale_color_brewer(palette = "Set1") + theme_bw()
+
+plotPCA(vsd, intgroup = "ageDeath") +
+  ggtitle("Age") +
+  scale_color_brewer(palette = "Set1") + theme_bw()
+
+vsd$has_apoe <- grepl("APOE4-KI", vsd$genotype)
+vsd$has_trem2 <- grepl("Trem2-R47H", vsd$genotype)
+
+plotPCA(vsd, intgroup = "has_apoe") +
+  ggtitle("Presence of APOE") +
+  scale_color_brewer(palette = "Set1") + theme_bw()
+
+plotPCA(vsd, intgroup = "has_trem2") +
+  ggtitle("Presence of Trem2-R47H") +
+  scale_color_brewer(palette = "Set1") + theme_bw()
+
+plotPCA(vsd, intgroup = "individualIdSource") +
+  ggtitle("Data source") +
+  scale_color_brewer(palette = "Set1") + theme_bw()
+
+plotPCA(vsd, intgroup = "sequencingBatch") +
+  ggtitle("Batch") +
+  scale_color_brewer(palette = "Set1") + theme_bw()
+
+plotPCA(vsd, intgroup = c("genotype", "sex")) +
+  ggtitle("Genotype vs sex") +
+  scale_color_brewer(palette = "Set1") + theme_bw()
+
+# There are too many genotypes and ages to sensibly plot genotype x age
+
+plotPCA(vsd, intgroup = c("sex", "ageDeath")) +
+  ggtitle("Sex vs age") +
+  scale_color_brewer(palette = "Set1") + theme_bw()
+
+plotPCA(vsd, intgroup = c("has_apoe", "sex")) +
+  ggtitle("Presence of APOE vs sex") +
+  scale_color_brewer(palette = "Set1") + theme_bw()
+
+plotPCA(vsd, intgroup = c("has_apoe", "ageDeath")) +
+  ggtitle("Presence of APOE vs age") +
+  scale_color_brewer(palette = "Set1") + theme_bw()
+
+plotPCA(vsd, intgroup = c("sequencingBatch", "ageDeath")) +
+  ggtitle("Batch vs age") +
+  scale_color_brewer(palette = "Set3") + theme_bw()
+
+vsd$analysis_group <- paste(vsd$sex, vsd$ageDeath)
+
+# Look at whether batch effects matter within analysis groups
+for (a_group in unique(vsd$analysis_group)) {
+  pca_dat <- plotPCA(vsd[, vsd$analysis_group == a_group],
+                     intgroup = c("sequencingBatch", "genotype"),
+                     returnData = TRUE)
+  
+  plt <- ggplot(pca_dat,
+                aes(x = PC1, y = PC2, shape = genotype, color = sequencingBatch)) +
+    geom_point() + theme_bw() +
+    ggtitle(paste0(a_group, ": batch vs genotype")) +
+    scale_color_brewer(palette = "Set1")
+  
+  print(plt)
+}
+```
+
+Jax APOE4.Trem2-R47H samples cluster by batch, sex, age, and the presence of human APOE4. Within each sex/age group, there are batch effects within each genotype but batches do not appear to separate genotypes from each other in most cases. 
+
+It may be tricky to analyze this data due to the number of batches with only one sample from a genotype in them. We will need to throw out some samples/batches and exclude some age/sex groups from analysis entirely. 
+
+I'm also unsure if I've split up the ages correctly, for example do the mice with an `ageDeath` ~10 months belong in the 8 month or 12 month category?
+
+
+```{r upload, eval=FALSE, include=FALSE}
+# Code to upload this file to Synapse and add its contents to its own wiki page,
+# which makes it nicely viewable.
+library(knit2synapse)
+library(synapser)
+
+synLogin(silent = TRUE)
+
+# TODO add provenance
+createAndKnitToFileEntity(file = "Jax.IU.Pitt_APOE4.Trem2.R47H_dataset.Rmd",
+                          parentId = "syn64299959",
+                          fileName = "Jax.IU.Pitt_APOE4.Trem2.R47H_dataset.Rmd",
+                          wikiName = "Jax.IU.Pitt_APOE4.Trem2.R47H Dataset Exploration",
+                          overwrite = TRUE,
+                          forceVersion = FALSE)
+```

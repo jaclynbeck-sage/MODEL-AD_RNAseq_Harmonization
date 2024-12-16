@@ -16,19 +16,38 @@ knitr::opts_chunk$set(echo = TRUE)
 ```{r initialize, include=FALSE}
 source("vis_utils.R")
 data <- load_data("UCI_PrimaryScreen")
+
+# "data" includes the following items:
+#   metadata, counts = data frames containing only valid samples
+#   all_metadata, all_counts = data frames containing valid + invalid samples
+#   all_counts_norm = the all_counts matrix normalized with vst() for PCA plotting
+
+meta_vis <- data$metadata %>%
+  mutate(ageDeath = paste(ageDeath, "months"))
 ```
+
+## Sample validation
+
+```{r print-invalid-samples}
+print_invalid_samples(data$all_metadata,
+                      columns_print = c("valid_abca7_variant",
+                                        "valid_abi3_variant",
+                                        "valid_Bin1",
+                                        "valid_Picalm",
+                                        "valid_Spi1",
+                                        "valid_trem2_r47h_variant"))
+```
+
+The two Abca7 mice that failed Abca7 variant validation (5382rh and 8310rh) failed due to an inability to detect the variant. This is probably due to the low sampling depth of the dataset as a whole. Regardless, there are not enough Abca7-WT samples to analyze these mice even if they had passed validation (see below).
 
 ## Study design
 
-```{r ps-design}
-meta_vis <- data$metadata %>%
-  mutate(ageDeath = paste(ageDeath, "months"))
-
+```{r study-design}
 # Study design
-print(table(meta_vis$genotype, meta_vis$ageDeath, meta_vis$sex))
+print_study_design(meta_vis, "sex", "genotype", "ageDeath")
 ```
 
-**This study does not have enough valid samples in any group** of genotype, sex, and age. This study will not be analyzed further or included in differential expression results.
+**This study does not have enough valid samples in any group** of genotype (mutant vs WT) and sex. This study will not be analyzed further or included in differential expression results.
 
 ```{r upload, eval=FALSE, include=FALSE}
 # Code to upload this file to Synapse and add its contents to its own wiki page,
@@ -39,9 +58,10 @@ library(synapser)
 synLogin(silent = TRUE)
 
 # TODO add provenance
-createAndKnitToFileEntity(file = "UCI_PrimaryScreen_dataset.Rmd", parentId = "syn64299959", 
+createAndKnitToFileEntity(file = "UCI_PrimaryScreen_dataset.Rmd",
+                          parentId = "syn64299959",
                           fileName = "UCI_PrimaryScreen_dataset.Rmd",
-                          wikiName = "UCI_PrimaryScreen Dataset Exploration", 
-                          overwrite = TRUE, forceVersion = FALSE)
-
+                          wikiName = "UCI_PrimaryScreen Dataset Exploration",
+                          overwrite = TRUE,
+                          forceVersion = FALSE)
 ```

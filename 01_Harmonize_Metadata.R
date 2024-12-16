@@ -34,6 +34,7 @@ tmp_dir <- file.path("data", "tmp")
 dir.create(tmp_dir, showWarnings = FALSE)
 
 metadata_list <- read.csv(file.path("data", "Model_AD_SynID_list.csv"))
+metadata_list <- subset(metadata_list, !(Study %in% c("UCI_Bin1K358R", "Jax.IU.Pitt_LOAD2")))
 
 # Process each study's metadata ------------------------------------------------
 
@@ -79,16 +80,16 @@ metadata <- lapply(1:nrow(metadata_list), function(N) {
       select(!contains("fastq"), -path, -study, -lane) %>%
 
       # Add totalReads for both lanes together. Some specimenIDs were sequenced
-      # in two different batches so we combine the batch names
+      # in two different batches but all lanes were merged so we use the first
+      # sequencing batch alphabetically to define those cases. This is what the
+      # original data contributor does in their own analysis.
       group_by_at(setdiff(colnames(.), c("totalReads", "sequencingBatch"))) %>%
       summarize(totalReads = sum(totalReads),
-                sequencingBatch = paste(sort(unique(sequencingBatch)), collapse = ";"),
+                sequencingBatch = sort(unique(sequencingBatch))[1],
                 .groups = "drop") %>%
 
       # Add missing columns to make the format match assay metadata files
-      mutate(platform = NA, RIN = NA,
-             rnaBatch = sequencingBatch,
-             libraryBatch = sequencingBatch)
+      mutate(platform = NA, RIN = NA, rnaBatch = NA, libraryBatch = NA)
 
   } else if (row$Study == "UCI_5XFAD") {
     # UCI_5XFAD: The specimen IDs in the assay metadata do not match what is in
@@ -117,7 +118,7 @@ metadata <- lapply(1:nrow(metadata_list), function(N) {
 
   ## Merge all metadata together -----------------------------------------------
 
-  # Only keep rows that exist in all dataframes so we only retain RNA
+  # Only keep rows that exist in all data frames so we only retain RNA
   # seq-related samples.
   combined_df <- merge(assay_df, biospec_df, all = FALSE) %>%
     merge(individual_df, all = FALSE)
@@ -148,12 +149,15 @@ metadata <- lapply(1:nrow(metadata_list), function(N) {
 
   # General fix to all studies, we need the "treatmentType" and "treatmentDose"
   # columns for the Cuprizone study but some of the other studies don't have
-  # these fields
+  # these fields. UCI_hAbeta_KI is missing "specimenIdSource"
   if (!hasName(combined_df, "treatmentType")) {
     combined_df$treatmentType <- NA
   }
   if (!hasName(combined_df, "treatmentDose")) {
     combined_df$treatmentDose <- NA
+  }
+  if (!hasName(combined_df, "specimenIdSource")) {
+    combined_df$specimenIdSource <- NA
   }
 
 
@@ -165,9 +169,9 @@ metadata <- lapply(1:nrow(metadata_list), function(N) {
   combined_df <- combined_df %>%
     select(individualID, specimenID, R_safe_specimenID, merged_file_specimenID,
            platform, RIN, rnaBatch, libraryBatch, sequencingBatch, organ,
-           tissue, samplingAge, treatmentType, treatmentDose, sex, ageDeath,
-           ageDeathUnits, genotype, genotypeBackground, modelSystemName,
-           study_name) %>%
+           specimenIdSource, tissue, samplingAge, individualIdSource,
+           treatmentType, treatmentDose, sex, ageDeath, ageDeathUnits, genotype,
+           genotypeBackground, modelSystemName, study_name) %>%
     distinct()
   return(combined_df)
 })

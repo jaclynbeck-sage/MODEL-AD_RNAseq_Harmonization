@@ -16,31 +16,76 @@ knitr::opts_chunk$set(echo = TRUE)
 ```{r initialize, include=FALSE}
 source("vis_utils.R")
 data <- load_data("UCI_5XFAD")
+
+# "data" includes the following items:
+#   metadata, counts = data frames containing only valid samples
+#   all_metadata, all_counts = data frames containing valid + invalid samples
+#   all_counts_norm = the all_counts matrix normalized with vst() for PCA plotting
+
+# For nicer printing, add "months" to the end of ageDeath
+meta_vis <- data$metadata %>%
+  mutate(ageDeath = paste(ageDeath, ageDeathUnits))
 ```
+
+## Sample validation
+
+```{r print-invalid-samples}
+print_invalid_samples(data$all_metadata,
+                      columns_print = c("valid_5x_variant", "valid_5x_expression"))
+```
+
+PCA of all samples to see where the genotype mismatches cluster.
+
+```{r mismatch-pca, message=FALSE}
+data$all_metadata <- data$all_metadata %>%
+  mutate(valid_genotype = ifelse(valid_sex & !valid_sample, FALSE, TRUE))
+
+create_pca_plot(data$all_metadata, data$all_counts_norm,
+                title = "PCA of all samples",
+                # aes specification
+                color = valid_genotype, shape = genotype)
+```
+
+Sex-related gene expression
+
+```{r sex-counts-plot}
+data$all_metadata <- data$all_metadata %>%
+  mutate(sex = as.character(sex),
+         sex = ifelse(valid_sex, sex, paste(sex, "mismatch")))
+
+plot_gene_counts(data$all_metadata, data$all_counts,
+                 genes_plot = c("Xist", "Eif2s3y", "Ddx3y"),
+                 draw_boxplot = FALSE,
+                 title = "Sex-related gene expression",
+                 # aes specification
+                 x = sex, y = counts, color = sex, shape = sex)
+```
+
+All 8 samples (from 4 mice) are clear mismatches and will be excluded.
 
 ## Study design
 
-```{r Uci5x-design}
-meta_vis <- data$metadata %>%
-  mutate(ageDeath = paste(ageDeath, "months"))
-
-# Study design
-print(table(meta_vis$genotype, meta_vis$ageDeath, meta_vis$sex, meta_vis$tissue))
+```{r study-design}
+print_study_design(meta_vis, c("sex", "tissue"), "genotype", "ageDeath")
 ```
 
 ## Check for batches
 
-```{r Uci5x-batches1}
+There are 4 batches present in the data:
+
+```{r batches}
 data$metadata %>%
   group_by(rnaBatch, libraryBatch, sequencingBatch) %>%
   summarize(count = n(), .groups = "drop")
 ```
 
+It is unclear whether the `NA` batches represent missing information or a separate batch. For analysis purposes we will treat it as a separate batch.
+
 All 3 batch variables are identical.
 
 Batches contain both genotypes:
 
-```{r Uci5x-batches2}
+```{r batches2}
 meta_vis <- meta_vis %>%
   mutate(batch = paste("Batch", rnaBatch))
 
@@ -49,13 +94,13 @@ table(meta_vis$batch, meta_vis$genotype)
 
 Batches contain both sexes:
 
-```{r Uci5x-batches3}
+```{r batches3}
 table(meta_vis$batch, meta_vis$sex)
 ```
 
 Batches are highly specific to `ageDeath`:
 
-```{r Uci5x-batches4}
+```{r batches4}
 table(meta_vis$batch, meta_vis$ageDeath)
 ```
 
@@ -63,52 +108,73 @@ The single 12-month sample in the `NA` batch could maybe be thrown out.
 
 Batches contain both tissues:
 
-```{r Uci5x-batches5}
+```{r batches5}
 table(meta_vis$batch, meta_vis$tissue)
 ```
 
-```{r Uci5x-batches6}
-meta_vis_18 <- meta_vis %>%
-  mutate(group = paste(tissue, sex, genotype)) %>%
-  subset(ageDeath == "18 months")
+Breakdown of batches within each analysis group
 
-table(meta_vis_18$group, meta_vis_18$batch)
+```{r batches6}
+print_study_design(meta_vis, c("sex", "tissue", "ageDeath"), "genotype", "batch")
 ```
 
-Examining the 18-month mice in more detail shows that there is only 1 male sample per tissue/genotype in the `NA` batch, which isn't ideal either. The 18-month sample sizes are very unbalanced between groups, so it's unclear whether this group should even be analyzed, and if so, whether batch differences will negatively effect the male samples.
+For male 18 month mice (both tissues), there is only 1 sample per tissue/genotype in the `NA` batch. The male 12 month mice (cerebral cortex) have the same issue. This could suggest that at least some of the `NA` batch labels are missing data instead of a separate batch. 
+
+The 18-month sample sizes for both sexes are very unbalanced between groups, so it's unclear whether this group should even be analyzed, and if so, whether batch differences will negatively effect the male samples.
 
 ## Human gene expression
 
-```{r Uci5x-human-expression, fig.width=8}
-plt <- plot_human_genes(data$counts, data$metadata, data$symbol_map)
-print(plt)
+```{r human-expression, fig.width=8}
+plot_gene_counts(data$metadata, data$counts,
+                 genes_plot = c("APOE", "APP", "MAPT", "PSEN1"),
+                 title = "Expression of human transgenes",
+                 # aes specification
+                 x = genotype, y = counts, color = genotype)
 ```
 
 ## Quality plots of samples -- Cerebral cortex
 
-```{r Uci5x-dds-cc, message=FALSE, warning=FALSE}
+```{r dds-cc, message=FALSE, warning=FALSE}
 meta_cc <- subset(meta_vis, tissue == "cerebral cortex")
 counts_cc <- data$counts[, meta_cc$merged_file_specimenID]
-dds_cc <- DESeqDataSetFromMatrix(counts_cc, meta_cc, design = ~ genotype)
+
+keep <- rowSums(counts_cc > 10) >= 3
+
+dds_cc <- DESeqDataSetFromMatrix(counts_cc[keep, ], meta_cc, design = ~ 1)
 dds_cc <- DESeq(dds_cc, quiet = TRUE)
 plotDispEsts(dds_cc)
 ```
 
-```{r Uci5x-vst-cc}
-vsd_cc <- vst(dds_cc, blind = FALSE)
+```{r vst-cc}
+vsd_cc <- vst(dds_cc)
 meanSdPlot(assay(vsd_cc))
 ```
 
 ## PCA plots -- Cerebral cortex
 
-```{r Uci5x-pca-cc, message=FALSE}
-plotPCA(vsd_cc, intgroup = "RIN") + theme_bw() + ggtitle("RIN")
+```{r pca-cc, message=FALSE, warning=FALSE}
+# DESeq2's plotPCA function forces numeric variables to be categorical, so we
+# use my function for plotting instead
+meta_cc$RIN <- as.numeric(meta_cc$RIN)
+create_pca_plot(meta_cc, assay(vsd_cc),
+                title = "RIN",
+                discrete_color = FALSE,
+                brewer_palette = "OrRd",
+                # aes specification
+                color = RIN)
 
-plotPCA(vsd_cc, intgroup = c("genotype", "sex")) + 
+# Boxplots of RIN vs each group
+meta_cc$group <- paste(meta_cc$sex, meta_cc$ageDeath)
+plot_grouped_boxplot(meta_cc,
+                     title = "RIN vs group",
+                     # aes specification
+                     x = group, y = RIN, color = genotype)
+
+plotPCA(vsd_cc, intgroup = c("genotype", "sex")) +
   ggtitle("Genotype vs sex") +
-  scale_color_brewer(palette = "Set1") + theme_bw() 
+  scale_color_brewer(palette = "Set1") + theme_bw()
 
-plotPCA(vsd_cc, intgroup = c("genotype", "ageDeath")) + 
+plotPCA(vsd_cc, intgroup = c("genotype", "ageDeath")) +
   ggtitle("Genotype vs age") +
   scale_color_brewer(palette = "Set1") + theme_bw()
 
@@ -125,33 +191,49 @@ plotPCA(vsd_cc, intgroup = c("rnaBatch", "genotype")) +
   scale_color_brewer(palette = "Set1") + theme_bw()
 ```
 
-5XFAD cerebral cortex samples cluster by genotype and age but not sex. The effects of genotype and age are much larger than any batch effects.
+5XFAD cerebral cortex samples cluster by genotype and age but not sex. The effects of genotype and age are much larger than any potential batch effects if the `NA` batch is a separate batch from the others. There might be a slight RIN bias between genotypes in a few groups.
 
 ## Quality plots of samples -- Hippocampus
 
-```{r Uci5x-dds-h, message=FALSE, warning=FALSE}
+```{r dds-h, message=FALSE, warning=FALSE}
 meta_h <- subset(meta_vis, tissue == "hippocampus")
 counts_h <- data$counts[, meta_h$merged_file_specimenID]
-dds_h <- DESeqDataSetFromMatrix(counts_h, meta_h, design = ~ genotype)
+
+keep <- rowSums(counts_h > 10) >= 3
+
+dds_h <- DESeqDataSetFromMatrix(counts_h[keep, ], meta_h, design = ~ 1)
 dds_h <- DESeq(dds_h, quiet = TRUE)
 plotDispEsts(dds_h)
 ```
 
-```{r Uci5x-vst-h}
-vsd_h <- vst(dds_h, blind = FALSE)
+```{r vst-h}
+vsd_h <- vst(dds_h)
 meanSdPlot(assay(vsd_h))
 ```
 
 ## PCA plots -- Hippocampus
 
-```{r Uci5x-pca-h, message=FALSE}
-plotPCA(vsd_h, intgroup = "RIN") + theme_bw() + ggtitle("RIN")
+```{r pca-h, message=FALSE}
+meta_h$RIN <- as.numeric(meta_h$RIN)
+create_pca_plot(meta_h, assay(vsd_h),
+                title = "RIN",
+                discrete_color = FALSE,
+                brewer_palette = "OrRd",
+                # aes specification
+                color = RIN)
 
-plotPCA(vsd_h, intgroup = c("genotype", "sex")) + 
+# Boxplots of RIN vs each group
+meta_h$group <- paste(meta_h$sex, meta_h$ageDeath)
+plot_grouped_boxplot(meta_h,
+                     title = "RIN vs group",
+                     # aes specification
+                     x = group, y = RIN, color = genotype)
+
+plotPCA(vsd_h, intgroup = c("genotype", "sex")) +
   ggtitle("Genotype vs sex") +
-  scale_color_brewer(palette = "Set1") + theme_bw() 
+  scale_color_brewer(palette = "Set1") + theme_bw()
 
-plotPCA(vsd_h, intgroup = c("genotype", "ageDeath")) + 
+plotPCA(vsd_h, intgroup = c("genotype", "ageDeath")) +
   ggtitle("Genotype vs age") +
   scale_color_brewer(palette = "Set1") + theme_bw()
 
@@ -168,7 +250,7 @@ plotPCA(vsd_h, intgroup = c("rnaBatch", "genotype")) +
   scale_color_brewer(palette = "Set1") + theme_bw()
 ```
 
-5XFAD hippocampus samples cluster by genotype and age but not sex, similar to the cerebral cortex. The effects of genotype and age are much larger than any batch effects. Given this, it may not be necessary to throw out samples from the NA batch for either tissue.
+5XFAD hippocampus samples cluster by genotype and age but not sex, similar to the cerebral cortex. The effects of genotype and age are much larger than any batch effects. Given this, it may not be necessary to throw out samples from the NA batch for either tissue. There is no obvious bias toward RIN within each analysis group.
 
 ```{r upload, eval=FALSE, include=FALSE}
 # Code to upload this file to Synapse and add its contents to its own wiki page,
@@ -179,9 +261,10 @@ library(synapser)
 synLogin(silent = TRUE)
 
 # TODO add provenance
-createAndKnitToFileEntity(file = "UCI_5XFAD_dataset.Rmd", parentId = "syn64299959",
+createAndKnitToFileEntity(file = "UCI_5XFAD_dataset.Rmd",
+                          parentId = "syn64299959",
                           fileName = "UCI_5XFAD_dataset.Rmd",
                           wikiName = "UCI_5XFAD Dataset Exploration",
-                          overwrite = TRUE, forceVersion = FALSE)
-
+                          overwrite = TRUE,
+                          forceVersion = FALSE)
 ```
