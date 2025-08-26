@@ -16,7 +16,7 @@ syn_metadata_file_id <- "syn61850266"
 syn_gene_counts_id <- "syn62690577"
 syn_symbol_map_id <- "syn62063692"
 
-synLogin()
+synLogin(silent = TRUE)
 
 github <- "https://github.com/jaclynbeck-sage/MODEL-AD_RNAseq_Harmonization/blob/main/07_DESeq2_Analysis.Rmd"
 tmp_dir <- file.path("data", "tmp")
@@ -174,8 +174,9 @@ create_model <- function(metadata, group_val, model_vars) {
 }
 
 
-get_all_de_results <- function(metadata_all, counts, study, ref_genotype,
-                               contrasts, group_cols = c("sex", "ageDeath"),
+get_all_de_results <- function(metadata_all, counts, study, model_name,
+                               ref_genotype, contrasts,
+                               group_cols = c("sex", "ageDeath"),
                                model_vars = c("genotype")) {
   meta_sub <- subset(metadata_all, study_name == study) %>%
     mutate(genotype = relevel(factor(genotype), ref = ref_genotype))
@@ -192,7 +193,7 @@ get_all_de_results <- function(metadata_all, counts, study, ref_genotype,
   plot_human_genes(counts_sub, meta_sub)
 
   # Run differential expression on each group separately
-  res_all <- lapply(unique(meta_sub$group), function(group) {
+  res_all <- lapply(as.character(unique(meta_sub$group)), function(group) {
     to_keep <- verify_sample_sizes(meta_sub, contrasts, group)
     contrasts <- contrasts[to_keep]
 
@@ -225,25 +226,45 @@ get_all_de_results <- function(metadata_all, counts, study, ref_genotype,
 
       summary(res)
 
+      meta_group <- meta_sub[meta_sub$group == group, ] |>
+        select(ageDeath, sex, tissue) |>
+        distinct()
+
       res <- res %>%
         as.data.frame() %>%
         mutate(ensembl_gene_id = rownames(.),
-               group = group,
-               test_genotype = contr[2],
-               reference_genotype = contr[3],
-               contrast = str_glue("{contr[2]} - {contr[3]}"))
+               model = model_name,
+               case = contr[2],
+               control = contr[3],
+               age = paste(meta_group$ageDeath, "months"),
+               sex = meta_group$sex,
+               tissue = meta_group$tissue) |>
+        dplyr::relocate(ensembl_gene_id, .before = baseMean) |>
+        dplyr::select(ensembl_gene_id, log2FoldChange, padj, model, case,
+                      control, age, sex, tissue)
       return(res)
     })
 
+    norm_sub <- assay(vsd) |>
+      as.data.frame() |>
+      tibble::rownames_to_column("ensembl_gene_id") |>
+      tidyr::pivot_longer(cols = -ensembl_gene_id,
+                          names_to = "specimenID",
+                          values_to = "expression") |>
+      merge(select(metadata_all, individualID, merged_file_specimenID, tissue,
+                   sex, ageDeath, genotype),
+            by.x = "specimenID", by.y = "merged_file_specimenID") |>
+      mutate(age = paste(ageDeath, "months"),
+             model = model_name) |>
+      dplyr::select(ensembl_gene_id, individualID, expression, tissue, sex, age,
+                    genotype, model)
+
     return(list(dds_result = do.call(rbind, res_group),
-                norm_counts = assay(vsd)))
+                norm_counts = norm_sub))
   })
 
-  norm_counts <- lapply(res_all, "[[", "norm_counts")
-  names(norm_counts) <- make.names(paste(unique(meta_sub$group)))
-
   return(list(dds_result = do.call(rbind, lapply(res_all, "[[", "dds_result")),
-              norm_counts = res_all$norm_counts))
+              norm_counts = do.call(rbind, lapply(res_all, "[[", "norm_counts"))))
 }
 
 
@@ -256,10 +277,13 @@ get_all_de_results <- function(metadata_all, counts, study, ref_genotype,
 meta_jax5x <- subset(metadata_all, study_name == "Jax.IU.Pitt_5XFAD") %>%
   mutate(ageDeath = case_when(ageDeath < 5 ~ 4,
                               ageDeath > 5 & ageDeath < 10 ~ 6,
-                              ageDeath > 10 ~ 12))
+                              ageDeath > 10 ~ 12)) |>
+  subset(ageDeath != 6) # We only want 4 mo and 12 mo for the explorer
 
 res_jax5x <- get_all_de_results(
-  meta_jax5x, counts, study = "Jax.IU.Pitt_5XFAD",
+  meta_jax5x, counts,
+  study = "Jax.IU.Pitt_5XFAD",
+  model_name = "5xFAD (IU/Jax/Pitt)",
   ref_genotype = "5XFAD_noncarrier",
   contrasts = list(c("genotype", "5XFAD_carrier", "5XFAD_noncarrier")),
   group_cols = c("sex", "ageDeath"),
@@ -271,9 +295,8 @@ res_jax5x <- get_all_de_results(
 ## Jax.IU.Pitt_APOE4.Trem2.R47H ------------------------------------------------
 
 meta_load1 <- subset(metadata_all, study_name == "Jax.IU.Pitt_APOE4.Trem2.R47H") %>%
-  # drop the two samples with Trem2-R47H_heterozygous genotypes, drop any
-  # samples with NA genotypes
-  subset(!grepl("heterozygous", genotype) & !is.na(genotype)) %>%
+  # drop the two samples with Trem2-R47H_heterozygous genotypes
+  subset(!grepl("heterozygous", genotype)) %>%
 
   # The ages of the mice span a wide range and need to be binned into 4, 8, 12,
   # and 24 month groups. The 4 month age group spans 3-4 months, the 8 month
@@ -309,13 +332,18 @@ res_load1 <- get_all_de_results(
 res_3x <- get_all_de_results(
   metadata_all, counts,
   study = "UCI_3xTg-AD",
+  model_name = "3xTg-AD",
   ref_genotype = "3xTg-AD_noncarrier",
   contrasts = list(c("genotype", "3xTg-AD_carrier", "3xTg-AD_noncarrier")),
   group_cols = c("sex", "ageDeath"),
   model_vars = c("genotype")
 )
 
-# TODO write to file
+write.csv(res_3x$dds_result, "data/de_output/3xTg-AD_de.csv",
+          row.names = FALSE, quote = FALSE)
+
+write.csv(res_3x$norm_counts, "data/de_output/3xTg-AD_normalized_expression.csv",
+          row.names = FALSE, quote = FALSE)
 
 
 ## UCI_5XFAD -------------------------------------------------------------------

@@ -13,9 +13,9 @@ syn_metadata_file_id <- "syn61850266"
 syn_gene_counts_id <- "syn62690577"
 syn_symbol_map_id <- "syn62063692"
 syn_genotype_folder_id <- "syn63913842"
-# TODO put intervals.bed file on Synapse
+syn_intervals_id <- "syn69046595"
 
-synLogin()
+synLogin(silent = TRUE)
 
 github <- "https://github.com/jaclynbeck-sage/MODEL-AD_RNAseq_Harmonization/blob/main/06_Sample_Validation.Rmd"
 tmp_dir <- file.path("data", "tmp")
@@ -134,9 +134,15 @@ print_expression_mismatches <- function(mismatch_df, genotype_name) {
 
 # Load counts and metadata -----------------------------------------------------
 
-metadata_file <- synGet(syn_metadata_file_id, downloadLocation = tmp_dir, ifcollision = "overwrite.local")
-counts_file <- synGet(syn_gene_counts_id, downloadLocation = tmp_dir, ifcollision = "overwrite.local")
-symbol_map_file <- synGet(syn_symbol_map_id, downloadLocation = tmp_dir, ifcollision = "overwrite.local")
+metadata_file <- synGet(syn_metadata_file_id,
+                        downloadLocation = tmp_dir,
+                        ifcollision = "overwrite.local")
+counts_file <- synGet(syn_gene_counts_id,
+                      downloadLocation = tmp_dir,
+                      ifcollision = "overwrite.local")
+symbol_map_file <- synGet(syn_symbol_map_id,
+                          downloadLocation = tmp_dir,
+                          ifcollision = "overwrite.local")
 
 metadata_all <- read.csv(metadata_file$path)
 counts <- read.delim(counts_file$path, header = TRUE, row.names = 1) %>%
@@ -205,7 +211,11 @@ study_vcfs <- lapply(studies, function(study) {
 #   end = real coordinate + 1
 # We undo this operation so the values in the "position" column match the values
 # in the vcf files.
-intervals <- read.delim("intervals_universal_genome.bed", header = FALSE) %>%
+intervals_file <- synGet(syn_intervals_id,
+                         downloadLocation = tmp_dir,
+                         ifcollision = "overwrite.local")
+
+intervals <- read.delim(intervals_file$path, header = FALSE) %>%
   dplyr::rename(chromosome = V1, start = V2, end = V3, mutation = V4) %>%
   rowwise() %>%
   # adds as many new rows as necessary to cover the full range of positions
@@ -585,11 +595,11 @@ variants_trem2 <- get_variant_mismatches(metadata_all, geno_info,
                                          total_positions = 1)
 
 
-# There are 9 carrier samples (homo- or heterozygous) with detected variants but
-# low quality, and another 4 carriers with no detected variants at all. The
+# There is 1 carrier sample (homo- or heterozygous) with detected variants but
+# low quality, and another 5 carriers with no detected variants at all. The
 # breakdown is:
-#   low quality: 8 Jax.IU.Pitt_APOE4.Trem2.R47H, 1 UCI_PrimaryScreen
-#   no detected variants: 1 Jax.IU.Pitt_APOE4.Trem2.R47H, 3 UCI_PrimaryScreen
+#   low quality: 1 UCI_PrimaryScreen
+#   no detected variants: 2 Jax.IU.Pitt_APOE4.Trem2.R47H, 3 UCI_PrimaryScreen
 #
 # Due to the generally low expression of Trem2 across all samples, it's possible
 # there wasn't enough coverage to hit the target region enough, so we do not
@@ -641,7 +651,7 @@ meta_stats <- merge(metadata_all, valid_samples) %>%
     ageDeath = case_when(
       study_name == "Jax.IU.Pitt_5XFAD" & ageDeath == 11 ~ 12,
       study_name == "Jax.IU.Pitt_APOE4.Trem2.R47H" & ageDeath <= 4 ~ 4,
-      study_name == "Jax.IU.Pitt_APOE4.Trem2.R47H" & ageDeath > 4 & ageDeath < 10 ~ 8,
+      study_name == "Jax.IU.Pitt_APOE4.Trem2.R47H" & ageDeath > 4 & ageDeath <= 10 ~ 8,
       study_name == "Jax.IU.Pitt_APOE4.Trem2.R47H" & ageDeath > 10 & ageDeath < 20 ~ 12,
       study_name == "Jax.IU.Pitt_APOE4.Trem2.R47H" & ageDeath > 20 ~ 24,
       .default = ageDeath
@@ -659,7 +669,3 @@ stats <- meta_stats %>%
 write.csv(stats, "study_validated_samples_stats.csv", row.names = FALSE)
 
 # TODO put on Synapse
-
-
-
-

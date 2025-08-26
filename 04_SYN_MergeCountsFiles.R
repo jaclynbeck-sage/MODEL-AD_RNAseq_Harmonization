@@ -28,7 +28,10 @@ library(purrr)
 # Synapse IDs used in this script
 syn_study_folders_id <- "syn51132850"
 
-synLogin()
+syn_id_list <- read.csv(file.path("data", "Model_AD_SynID_list.csv"),
+                        comment.char = "#")
+
+synLogin(silent = TRUE)
 
 github <- "https://github.com/jaclynbeck-sage/MODEL-AD_RNAseq_Harmonization/blob/main/04_SYN_MergeCountsFiles.R"
 tmp_dir <- file.path("data", "tmp")
@@ -42,6 +45,20 @@ study_names <- sapply(study_folders, "[[", "name")
 # benchmarking folder.
 study_folders <- study_folders[!grepl("Benchmarking", study_names)]
 study_names <- sapply(study_folders, "[[", "name")
+
+# Print a warning if there are folders on Synapse that don't correspond to the
+# studies in the syn ID list file.
+if (any(!(study_names %in% syn_id_list$Study))) {
+  missing <- setdiff(study_names, syn_id_list$Study)
+  msg <- paste0("Synapse folder(s) found for studies that do not exist in ",
+                "Model_AD_SynID_list.csv: \n",
+                paste(missing, collapse = ", "),
+                "\nThese studies will be ignored.")
+  warning(msg)
+
+  study_folders <- study_folders[study_names %in% syn_id_list$Study]
+  study_names <- sapply(study_folders, "[[", "name")
+}
 
 
 # Loop through each study folder -----------------------------------------------

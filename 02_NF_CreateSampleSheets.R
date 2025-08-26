@@ -35,7 +35,6 @@ library(dplyr)
 syn_metadata_file_id <- "syn61850266"
 syn_ref_fasta_id <- "syn62035247"
 syn_ref_gtf_id <- "syn62035250"
-syn_jax_5xfad_fastq_key_id <- "syn34733116"
 syn_samplesheet_folder_id <- "syn62147112"
 syn_portal_query_id <- "syn11346063"
 
@@ -48,7 +47,8 @@ dir.create(tmp_dir, showWarnings = FALSE)
 dir.create(samplesheet_dir, showWarnings = FALSE)
 dir.create(provenance_dir, showWarnings = FALSE)
 
-syn_ids <- read.csv(file.path("data", "Model_AD_SynID_list.csv"))
+syn_ids <- read.csv(file.path("data", "Model_AD_SynID_list.csv"),
+                    comment.char = "#")
 
 meta_file <- synGet(syn_metadata_file_id, downloadLocation = tmp_dir,
                     ifcollision = "overwrite.local")
@@ -109,28 +109,16 @@ for (N in 1:nrow(syn_ids)) {
 
   ## Study-specific handling of ID formatting issues ---------------------------
 
-  # The annotated specimenIDs don't match the updated metadata files for the
-  # Jax studies so we map between the two using the fastq files key provided
-  # with the updated metadata
-  if (row$Study %in% c("Jax.IU.Pitt_5XFAD", "Jax.IU.Pitt_APOE4.Trem2.R47H")) {
-    fastq_key_id <- ifelse(row$Study == "Jax.IU.Pitt_5XFAD",
-                           syn_jax_5xfad_fastq_key_id,
-                           row$Metadata_Assay)
+  # Temporary: The annotated specimenIDs don't match the updated metadata files
+  # for the Jax studies, but the specimenID is in the filename
+  if (row$Study == "Jax.IU.Pitt_5XFAD") {
+    tmp_ids <- str_split(all_fastqs$name, "_", simplify = TRUE)[, c(2, 3)]
+    all_fastqs$specimenID <- paste0(tmp_ids[, 1], "_", tmp_ids[, 2])
 
-    fastq_key_file <- synGet(fastq_key_id, downloadLocation = tmp_dir,
-                             ifcollision = "overwrite.local")
-    fastq_key_df <- read.csv(fastq_key_file$path) %>%
-      select(sampleName, fastq_1, fastq_2) %>%
-      tidyr::pivot_longer(cols = c(fastq_1, fastq_2),
-                          names_to = "fastq_type",
-                          values_to = "name") %>%
-      mutate(name = str_replace(name, "_S.*_L00.", "")) %>%
-      distinct() %>%
-      dplyr::rename(specimenID = sampleName)
-
-    all_fastqs <- all_fastqs %>%
-      select(-specimenID) %>%
-      merge(fastq_key_df)
+  } else if (row$Study == "Jax.IU.Pitt_APOE4.Trem2.R47H") {
+    # Temporary: the query currently returns both the old fastq files and the
+    # new fastq files, so we filter out the old ones.
+    all_fastqs <- subset(all_fastqs, specimenID %in% meta_filt$specimenID)
 
   } else if (row$Study == "UCI_5XFAD") {
     # Specimen IDs in the annotation are formatted with a numerical ID followed
@@ -180,6 +168,8 @@ for (N in 1:nrow(syn_ids)) {
     keep <- (!all_fastqs$is_duplicate) | all_fastqs$is_reseq
     all_fastqs <- all_fastqs[keep, ]
   }
+
+  stopifnot(all_fastqs$specimenID %in% meta_filt$specimenID)
 
 
   ## Format sample sheet for NextFlow ------------------------------------------

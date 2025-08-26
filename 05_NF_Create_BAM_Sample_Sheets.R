@@ -22,7 +22,7 @@ syn_metadata_file_id <- "syn61850266"
 syn_bam_files_id <- "syn63856101"
 syn_samplesheet_folder_id <- "syn62147112"
 
-synLogin()
+synLogin(silent = TRUE)
 tmp_dir <- file.path("data", "tmp")
 samplesheet_dir <- file.path("data", "sample_sheets")
 provenance_dir <- file.path("data", "provenance_manifests")

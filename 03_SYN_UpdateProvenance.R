@@ -25,10 +25,11 @@ syn_study_folders_id <- "syn51132850"
 syn_nf_config_folder_id <- "syn62147114"
 syn_nf_samplesheet_folder_id <- "syn62147112"
 
-synLogin()
+synLogin(silent = TRUE)
 
 provenance_dir <- file.path("data", "provenance_manifests")
-syn_id_list <- read.csv(file.path("data", "Model_AD_SynID_list.csv"))
+syn_id_list <- read.csv(file.path("data", "Model_AD_SynID_list.csv"),
+                        comment.char = "#")
 
 # Get all the folders of counts files that exist on Synapse
 study_folders <- synGetChildren(syn_study_folders_id,
@@ -44,11 +45,11 @@ study_names <- sapply(study_folders, "[[", "name")
 # studies in the syn ID list file.
 if (any(!(study_names %in% syn_id_list$Study))) {
   missing <- setdiff(study_names, syn_id_list$Study)
-  msg <- paste0("WARNING: Synapse folder(s) found for studies that do not ",
-                "exist in Model_AD_SynID_list.csv: ",
+  msg <- paste0("Synapse folder(s) found for studies that do not exist in ",
+                "Model_AD_SynID_list.csv: \n",
                 paste(missing, collapse = ", "),
-                ". These studies will be ignored.")
-  message(msg)
+                "\nThese studies will be ignored.")
+  warning(msg)
 
   study_folders <- study_folders[study_names %in% syn_id_list$Study]
   study_names <- sapply(study_folders, "[[", "name")

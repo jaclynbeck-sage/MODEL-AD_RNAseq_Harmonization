@@ -54,7 +54,7 @@ setwd("..")
 
 synLogin()
 meta_file <- synGet("syn61850266", downloadLocation = file.path("data", "tmp"))
-metadata <- read.csv(file.path("data", "tmp", "Model_AD_merged_metadata.csv"))
+metadata <- read.csv(meta_file$path)
 
 # Necessary because R puts an "X" in front of any specimen IDs that start with
 # a number to make column names
@@ -195,7 +195,7 @@ ggplot(df_combined[diff_counts2, ],
 
 ## How many different genes per sample?
 
-**For each sample, howmany genes have a count difference > 1 between the base 
+**For each sample, how many genes have a count difference > 1 between the base 
 mouse genome and the universal genome?**
 
 ```{r}
@@ -326,7 +326,7 @@ df_human$gene_source[grepl("ENSG", df_human$gene_id)] <- "Human"
 ```{r}
 df_human$humanized_APOE <- df_human$genotype %in% c("APOE4-KI_homozygous", 
                                                     "APOE4-KI_homozygous; Trem2-R47H_homozygous")
-df_human$humanized_APP <- df_human$genotype %in% c("3xTg-AD_homozygous", 
+df_human$humanized_APP <- df_human$genotype %in% c("3xTg-AD_carrier",
                                                    "5XFAD_carrier")
 df_human$humanized_MAPT <- df_human$genotype %in% c("3xTg-AD_carrier")
 df_human$humanized_PSEN1 <- df_human$genotype %in% c("5XFAD_carrier")

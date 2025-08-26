@@ -33,8 +33,8 @@ synLogin(silent = TRUE)
 tmp_dir <- file.path("data", "tmp")
 dir.create(tmp_dir, showWarnings = FALSE)
 
-metadata_list <- read.csv(file.path("data", "Model_AD_SynID_list.csv"))
-metadata_list <- subset(metadata_list, !(Study %in% c("UCI_Bin1K358R", "Jax.IU.Pitt_LOAD2")))
+metadata_list <- read.csv(file.path("data", "Model_AD_SynID_list.csv"),
+                          comment.char = "#")
 
 # Process each study's metadata ------------------------------------------------
 
@@ -54,6 +54,18 @@ metadata <- lapply(1:nrow(metadata_list), function(N) {
                             downloadLocation = tmp_dir,
                             ifcollision = "overwrite.local")
 
+  for (syn_file in c(assay_file, biospec_file, individual_file)) {
+    if (!syn_file$isLatestVersion) {
+      warning(
+        str_glue("'{syn_file$name}' ({syn_file$id} v{syn_file$versionNumber}) ",
+                 "is not the most recent version on Synapse! \nThe specified ",
+                 "version ({syn_file$versionNumber}) will be used for ",
+                 "harmonization unless 'Model_AD_SynIDlist.csv' is updated ",
+                 "with with a newer version.")
+      )
+    }
+  }
+
   assay_df <- read.csv(assay_file$path)
   biospec_df <- read.csv(biospec_file$path)
   individual_df <- read.csv(individual_file$path)
@@ -61,37 +73,7 @@ metadata <- lapply(1:nrow(metadata_list), function(N) {
 
   ## Study-specific fixes ------------------------------------------------------
 
-  # Jax.IU.Pitt_APOE4.Trem2.R47H: We are temporarily using a file from the
-  # staging version of the project, not what is released in the portal. This
-  # file isn't technically in the format of a portal assay file but has the
-  # information we need, with some extra restructuring needed. This file has two
-  # rows for some specimenIDs because of sequencing on two separate lanes. We
-  # remove duplicate rows since the fastqs we are using have both lanes merged.
-  if (row$Study == "Jax.IU.Pitt_APOE4.Trem2.R47H") {
-    assay_df <- assay_df %>%
-      dplyr::rename(individualID = animalName,
-                    specimenID = sampleName) %>%
-
-      # Make totalReads a number
-      mutate(totalReads = str_replace_all(totalReads, ",", ""),
-             totalReads = as.numeric(totalReads)) %>%
-
-      # Remove references to specific fastq files
-      select(!contains("fastq"), -path, -study, -lane) %>%
-
-      # Add totalReads for both lanes together. Some specimenIDs were sequenced
-      # in two different batches but all lanes were merged so we use the first
-      # sequencing batch alphabetically to define those cases. This is what the
-      # original data contributor does in their own analysis.
-      group_by_at(setdiff(colnames(.), c("totalReads", "sequencingBatch"))) %>%
-      summarize(totalReads = sum(totalReads),
-                sequencingBatch = sort(unique(sequencingBatch))[1],
-                .groups = "drop") %>%
-
-      # Add missing columns to make the format match assay metadata files
-      mutate(platform = NA, RIN = NA, rnaBatch = NA, libraryBatch = NA)
-
-  } else if (row$Study == "UCI_5XFAD") {
+  if (row$Study == "UCI_5XFAD") {
     # UCI_5XFAD: The specimen IDs in the assay metadata do not match what is in
     # the biospecimen metadata, so we need to fix them. In the assay metadata
     # they are of the format "<individualID>(H or C)_RNAseq", (e.g.
@@ -111,9 +93,9 @@ metadata <- lapply(1:nrow(metadata_list), function(N) {
     biospec_df$samplingAge <- NA
   }
 
-  # Studies Jax.IU.Pitt_5XFAD, UCI_3xTg-AD, UCI_ABCA7, UCI_PrimaryScreen,
-  # UCI_Trem2_Cuprizone, and UCI_Trem2-R47H_NSS need no specialized corrections
-  # in this section
+  # Studies Jax.IU.Pitt_5XFAD, Jax.IU.Pitt_APOE4.Trem2.R47H, UCI_3xTg-AD,
+  # UCI_ABCA7, UCI_PrimaryScreen, UCI_Trem2_Cuprizone, and UCI_Trem2-R47H_NSS
+  # need no specialized corrections in this section
 
 
   ## Merge all metadata together -----------------------------------------------

@@ -6,16 +6,17 @@
 
 library(synapser)
 
-synLogin()
+synLogin(silent = TRUE)
 
 # Set up -----------------------------------------------------------------------
 
-# The top-level "Data" folder in the harmonization project
-data_folder_syn_id <- "syn25882597"
+# The top-level "Staging" folder in the harmonization project
+data_folder_syn_id <- "syn25882599"
 
 # The following folders were pre-created in this project by data curators:
 folder_syn_ids <- list(
   metadata = "syn61850200",
+  gene_expression_main = "syn64314221",
   gene_counts = "syn51132850",
   gene_norm_counts = "syn51132852"
 )
@@ -28,17 +29,24 @@ folders_add <- list(
 )
 
 # List of studies that should get folders added in various places
-study_list <- read.csv(file.path("data", "Model_AD_SynID_list.csv"))
+study_list <- read.csv(file.path("data", "Model_AD_SynID_list.csv"),
+                       comment.char = "#")
 
 
 # Add main folders to Data/ ----------------------------------------------------
 
 # This will do nothing for folders that already exist except get their Synapse IDs
-folders_add_syn_ids <- lapply(folders_add, function(folder_name) {
-  folder <- Folder(name = folder_name, parent = data_folder_syn_id)
+create_folder <- function(folder_name, parent_id) {
+  folder <- Folder(name = folder_name, parent = parent_id)
   folder <- synStore(folder)
   return(folder$id)
-})
+}
+
+folders_add_syn_ids <- list(
+  bam_files = create_folder(folders_add$bam_files, folder_syn_ids$gene_expression_main),
+  nf_pipeline = create_folder(folders_add$nf_pipeline, data_folder_syn_id),
+  ref_genomes = create_folder(folders_add$ref_genomes, data_folder_syn_id)
+)
 
 # Combine all folders into one list
 folder_syn_ids <- c(folder_syn_ids, folders_add_syn_ids)
