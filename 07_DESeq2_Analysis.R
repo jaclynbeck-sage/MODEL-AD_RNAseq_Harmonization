@@ -31,12 +31,21 @@ counts_file <- synGet(syn_gene_counts_id, downloadLocation = tmp_dir,
 symbol_map_file <- synGet(syn_symbol_map_id, downloadLocation = tmp_dir,
                           ifcollision = "overwrite.local")
 
-metadata_all <- read.csv(metadata_file$path)
+metadata_all <- read.csv(metadata_file$path) |>
+  mutate(
+    sex = str_to_title(sex), # Upper-case
+    # Change to "Females" and "Males", plural
+    sex_group = paste0(sex, "s"),
+    # Add "months" to the end of each age
+    age_group = paste(round(ageDeath), "months"),
+    # Title case tissue
+    tissue = str_to_title(tissue)
+  )
 
 counts <- read.table(counts_file$path, header = TRUE, sep = "\t",
-                     row.names = 1) %>%
+                     row.names = 1) |>
   # Get rid of transcript_id column
-  select(-transcript_id.s.) %>%
+  select(-transcript_id.s.) |>
   # RSEM can return non-integer numbers for counts, so it needs to be rounded
   # to whole numbers for DESeq2
   round(digits = 0)
@@ -60,15 +69,16 @@ symbol_map <- read.csv(symbol_map_file$path)
 # Plots the expression of human genes to make sure samples are expressing or
 # not expressing them where applicable
 plot_human_genes <- function(counts_mat, meta) {
-  human_df <- counts_mat[grepl("ENSG", rownames(counts_mat)), ] %>%
+  human_df <- counts_mat[grepl("ENSG", rownames(counts_mat)), ] |>
+    as.data.frame() |>
     # Ensembl IDs disappear if we don't make it a column
-    mutate(ensembl_gene_id = rownames(.)) %>%
+    tibble::rownames_to_column("ensembl_gene_id") |>
     # All columns except ensembl_gene_id get melted into two columns, sample and
     # count
     tidyr::pivot_longer(cols = where(is.numeric), names_to = "sample",
-                        values_to = "count") %>%
+                        values_to = "count") |>
     # Get genotype information
-    merge(meta, by.x = "sample", by.y = "merged_file_specimenID") %>%
+    merge(meta, by.x = "sample", by.y = "merged_file_specimenID") |>
     # Get gene symbols
     merge(symbol_map)
 
@@ -99,8 +109,8 @@ run_diff_expr <- function(counts, metadata, group_vals, model = "~ genotype") {
 
   # Remove rows with mostly 0 counts -- enough samples have to have a count of
   # 10 or more for each gene
-  group_sizes <- meta_group %>%
-    group_by(genotype, group) %>%
+  group_sizes <- meta_group |>
+    group_by(genotype, group) |>
     summarize(count = n(), .groups = "drop")
 
   rows_keep <- rowSums(counts_group >= 10) >= min(group_sizes$count)
@@ -116,8 +126,8 @@ run_diff_expr <- function(counts, metadata, group_vals, model = "~ genotype") {
 
 
 verify_sample_sizes <- function(metadata, contrasts, group_val) {
-  n_samples <- subset(metadata, group == group_val) %>%
-    group_by(genotype) %>%
+  n_samples <- subset(metadata, group == group_val) |>
+    group_by(genotype) |>
     summarize(count = n())
 
   if (any(n_samples$count < 3)) {
@@ -174,15 +184,17 @@ create_model <- function(metadata, group_val, model_vars) {
 }
 
 
-get_all_de_results <- function(metadata_all, counts, study, model_name,
-                               ref_genotype, contrasts,
-                               group_cols = c("sex", "ageDeath"),
+get_all_de_results <- function(metadata, counts, parameters,
+                               group_cols = c("sex", "age_group"),
                                model_vars = c("genotype")) {
-  meta_sub <- subset(metadata_all, study_name == study) %>%
-    mutate(genotype = relevel(factor(genotype), ref = ref_genotype))
+  meta_sub <- subset(metadata, study_name == parameters$study) |>
+    mutate(genotype = relevel(factor(genotype), ref = parameters$ref_genotype))
 
-  meta_sub$group <- do.call(paste, meta_sub[, group_cols]) %>%
-    paste("months") %>% factor()
+  if (length(group_cols) > 1) {
+    meta_sub$group <- do.call(paste, meta_sub[, group_cols]) |> factor()
+  } else {
+    meta_sub$group <- meta_sub[, group_cols] |> factor()
+  }
 
   counts_sub <- counts[, meta_sub$merged_file_specimenID]
 
@@ -194,8 +206,8 @@ get_all_de_results <- function(metadata_all, counts, study, model_name,
 
   # Run differential expression on each group separately
   res_all <- lapply(as.character(unique(meta_sub$group)), function(group) {
-    to_keep <- verify_sample_sizes(meta_sub, contrasts, group)
-    contrasts <- contrasts[to_keep]
+    to_keep <- verify_sample_sizes(meta_sub, parameters$contrasts, group)
+    contrasts <- parameters$contrasts[to_keep]
 
     if (length(contrasts) == 0) {
       print(str_glue("No contrasts left to compare due to low sample counts. ",
@@ -227,17 +239,24 @@ get_all_de_results <- function(metadata_all, counts, study, model_name,
       summary(res)
 
       meta_group <- meta_sub[meta_sub$group == group, ] |>
-        select(ageDeath, sex, tissue) |>
+        select(age_group, sex_group, tissue) |>
         distinct()
 
-      res <- res %>%
-        as.data.frame() %>%
-        mutate(ensembl_gene_id = rownames(.),
-               model = model_name,
+      if (nrow(meta_group) > 1) {
+        meta_group <- meta_group |>
+          summarize(
+            across(everything(), ~ paste(sort(unique(.x)), collapse = " & "))
+          )
+      }
+
+      res <- res |>
+        as.data.frame() |>
+        tibble::rownames_to_column("ensembl_gene_id") |>
+        mutate(model = parameters$model_name,
                case = contr[2],
                control = contr[3],
-               age = paste(meta_group$ageDeath, "months"),
-               sex = meta_group$sex,
+               age = as.character(meta_group$age_group),
+               sex = as.character(meta_group$sex_group),
                tissue = meta_group$tissue) |>
         dplyr::relocate(ensembl_gene_id, .before = baseMean) |>
         dplyr::select(ensembl_gene_id, log2FoldChange, padj, model, case,
@@ -245,26 +264,36 @@ get_all_de_results <- function(metadata_all, counts, study, model_name,
       return(res)
     })
 
-    norm_sub <- assay(vsd) |>
-      as.data.frame() |>
-      tibble::rownames_to_column("ensembl_gene_id") |>
-      tidyr::pivot_longer(cols = -ensembl_gene_id,
-                          names_to = "specimenID",
-                          values_to = "expression") |>
-      merge(select(metadata_all, individualID, merged_file_specimenID, tissue,
-                   sex, ageDeath, genotype),
-            by.x = "specimenID", by.y = "merged_file_specimenID") |>
-      mutate(age = paste(ageDeath, "months"),
-             model = model_name) |>
-      dplyr::select(ensembl_gene_id, individualID, expression, tissue, sex, age,
-                    genotype, model)
-
-    return(list(dds_result = do.call(rbind, res_group),
-                norm_counts = norm_sub))
+    return(do.call(rbind, res_group))
   })
 
-  return(list(dds_result = do.call(rbind, lapply(res_all, "[[", "dds_result")),
-              norm_counts = do.call(rbind, lapply(res_all, "[[", "norm_counts"))))
+  return(do.call(rbind, res_all))
+}
+
+
+get_norm_counts <- function(meta, counts, model_name) {
+  counts <- counts[, meta$merged_file_specimenID]
+  sfs <- estimateSizeFactorsForMatrix(counts)
+
+  # Only keep genes that are expressed in at least 3 samples.
+  keep <- rowSums(counts > 0) >= 3
+  print(str_glue("{model_name}: Keeping {sum(keep)} genes."))
+
+  counts[keep, ] |>
+    sageRNAUtils::simple_log2norm(size_factors = sfs) |>
+    as.data.frame() |>
+    tibble::rownames_to_column("ensembl_gene_id") |>
+    tidyr::pivot_longer(cols = -ensembl_gene_id,
+                        names_to = "specimenID",
+                        values_to = "expression") |>
+    merge(select(meta, individualID, merged_file_specimenID, tissue, sex,
+                 age_group, genotype),
+          by.x = "specimenID", by.y = "merged_file_specimenID") |>
+    mutate(age = age_group,
+           model = model_name) |>
+    # Put columns in a specific order
+    dplyr::select(ensembl_gene_id, individualID, expression, tissue, sex, age,
+                  genotype, model)
 }
 
 
@@ -274,75 +303,128 @@ get_all_de_results <- function(metadata_all, counts, study, model_name,
 
 # This data has no separate batches.
 # Bin the ages into 4, 6, and 12 months
-meta_jax5x <- subset(metadata_all, study_name == "Jax.IU.Pitt_5XFAD") %>%
-  mutate(ageDeath = case_when(ageDeath < 5 ~ 4,
-                              ageDeath > 5 & ageDeath < 10 ~ 6,
-                              ageDeath > 10 ~ 12)) |>
-  subset(ageDeath != 6) # We only want 4 mo and 12 mo for the explorer
+meta_jax5x <- subset(metadata_all, study_name == "Jax.IU.Pitt_5XFAD") |>
+  mutate(age_group = case_when(ageDeath < 5 ~ "4 months",
+                               ageDeath > 5 & ageDeath < 10 ~ "6 months",
+                               ageDeath > 10 ~ "12 months")) |>
+  subset(age_group != "6 months") # We only want 4 mo and 12 mo for the explorer
 
-res_jax5x <- get_all_de_results(
-  meta_jax5x, counts,
+params_jax5x <- list(
   study = "Jax.IU.Pitt_5XFAD",
   model_name = "5xFAD (IU/Jax/Pitt)",
   ref_genotype = "5XFAD_noncarrier",
-  contrasts = list(c("genotype", "5XFAD_carrier", "5XFAD_noncarrier")),
-  group_cols = c("sex", "ageDeath"),
+  contrasts = list(c("genotype", "5XFAD_carrier", "5XFAD_noncarrier"))
+)
+
+# Separated by sex and ageDeath
+res_jax5x <- get_all_de_results(
+  meta_jax5x, counts, params_jax5x,
+  group_cols = c("sex", "age_group"),
   model_vars = c("genotype")
 )
-# TODO write to file
+
+# Males and females together, separated by ageDeath
+res_jax5x_mf <- get_all_de_results(
+  meta_jax5x, counts, params_jax5x,
+  group_cols = c("age_group"),
+  model_vars = c("genotype", "sex")
+)
+
+write.csv(rbind(res_jax5x, res_jax5x_mf),
+          str_glue("data/de_output/{params_jax5x$study}_differential_expression.csv"),
+          row.names = FALSE, quote = FALSE)
+
+norm_jax5x <- get_norm_counts(meta_jax5x, counts, params_jax5x$model_name)
+write.csv(norm_jax5x,
+          str_glue("data/de_output/{params_jax5x$study}_normalized_expression.csv"),
+          row.names = FALSE, quote = FALSE)
 
 
 ## Jax.IU.Pitt_APOE4.Trem2.R47H ------------------------------------------------
 
-meta_load1 <- subset(metadata_all, study_name == "Jax.IU.Pitt_APOE4.Trem2.R47H") %>%
+meta_load1 <- subset(metadata_all, study_name == "Jax.IU.Pitt_APOE4.Trem2.R47H") |>
   # drop the two samples with Trem2-R47H_heterozygous genotypes
-  subset(!grepl("heterozygous", genotype)) %>%
+  subset(!grepl("heterozygous", genotype)) |>
 
   # The ages of the mice span a wide range and need to be binned into 4, 8, 12,
   # and 24 month groups. The 4 month age group spans 3-4 months, the 8 month
   # group spans 7-10 months, the 12 month group actually spans 13-16 months, and
   # the 24 month group spans 24-28 months. Because of this spread, we will use
   # their real age as a variable in the model within each age group.
-  mutate(real_age = ageDeath,
-         ageDeath = case_when(ageDeath < 5 ~ 4,
-                              ageDeath > 5 & ageDeath < 11 ~ 8,
-                              ageDeath > 11 & ageDeath < 20 ~ 12,
-                              ageDeath > 20 ~ 24))
+  mutate(age_group = case_when(ageDeath < 5 ~ "4 months",
+                               ageDeath > 5 & ageDeath < 11 ~ "8 months",
+                               ageDeath > 11 & ageDeath < 20 ~ "12 months",
+                               ageDeath > 20 ~ "24 months")) |>
+  # We only want 4 and 12 months for the explorer
+  subset(age_group %in% c("4 months", "12 months"))
 
 ref_geno <- "APOE4-KI_WT; Trem2-R47H_WT"
 
-res_load1 <- get_all_de_results(
-  meta_load1, counts,
+params_load1 <- list(
   study = "Jax.IU.Pitt_APOE4.Trem2.R47H",
+  model_name = "LOAD1",
   ref_genotype = ref_geno,
   contrasts = list(
     c("genotype", "APOE4-KI_homozygous; Trem2-R47H_homozygous", ref_geno),
     c("genotype", "APOE4-KI_homozygous; Trem2-R47H_WT", ref_geno),
-    c("genotype", "APOE4-KI_WT; Trem2-R47H_homozygous", ref_geno)),
-  group_cols = c("sex", "ageDeath"),
-  model_vars = c("sequencingBatch", "real_age", "genotype")
+    c("genotype", "APOE4-KI_WT; Trem2-R47H_homozygous", ref_geno)
+  )
 )
 
-# TODO write to file
+# Separated by sex and ageDeath
+res_load1 <- get_all_de_results(
+  meta_load1, counts, params_load1,
+  group_cols = c("sex", "age_group"),
+  model_vars = c("genotype", "ageDeath", "sequencingBatch")
+)
+
+# Males and females together, separated by ageDeath
+res_load1_mf <- get_all_de_results(
+  meta_load1, counts, params_load1,
+  group_cols = c("age_group"),
+  model_vars = c("genotype", "sex", "ageDeath", "sequencingBatch")
+)
+
+write.csv(rbind(res_load1, res_load1_mf),
+          str_glue("data/de_output/{params_load1$study}_differential_expression.csv"),
+          row.names = FALSE, quote = FALSE)
+
+norm_load1 <- get_norm_counts(meta_load1, counts, params_load1$model_name)
+write.csv(norm_load1,
+          str_glue("data/de_output/{params_load1$study}_normalized_expression.csv"),
+          row.names = FALSE, quote = FALSE)
 
 
 ## UCI_3xTg-AD -----------------------------------------------------------------
 
-# There are no batch effects, no separate tissues
-res_3x <- get_all_de_results(
-  metadata_all, counts,
+params_3x <- list(
   study = "UCI_3xTg-AD",
   model_name = "3xTg-AD",
   ref_genotype = "3xTg-AD_noncarrier",
-  contrasts = list(c("genotype", "3xTg-AD_carrier", "3xTg-AD_noncarrier")),
-  group_cols = c("sex", "ageDeath"),
+  contrasts = list(c("genotype", "3xTg-AD_carrier", "3xTg-AD_noncarrier"))
+)
+
+# There are no batch effects, no separate tissues
+res_3x <- get_all_de_results(
+  metadata_all, counts, params_3x,
+  group_cols = c("sex", "age_group"),
   model_vars = c("genotype")
 )
 
-write.csv(res_3x$dds_result, "data/de_output/3xTg-AD_de.csv",
+res_3x_mf <- get_all_de_results(
+  metadata_all, counts, params_3x,
+  group_cols = c("age_group"),
+  model_vars = c("genotype", "sex")
+)
+
+write.csv(rbind(res_3x, res_3x_mf),
+          str_glue("data/de_output/{params_3x$study}_differential_expression.csv"),
           row.names = FALSE, quote = FALSE)
 
-write.csv(res_3x$norm_counts, "data/de_output/3xTg-AD_normalized_expression.csv",
+norm_3x <- get_norm_counts(subset(metadata_all, study_name == params_3x$study),
+                           counts, params_3x$model_name)
+write.csv(norm_3x,
+          str_glue("data/de_output/{params_3x$study}_normalized_expression.csv"),
           row.names = FALSE, quote = FALSE)
 
 
@@ -351,51 +433,97 @@ write.csv(res_3x$norm_counts, "data/de_output/3xTg-AD_normalized_expression.csv"
 # This data has a sequencing batch, but it corresponds to the age of death so
 # we don't include it in the model. There are two tissues.
 
-res_5x <- get_all_de_results(
-  metadata_all, counts, study = "UCI_5XFAD",
+# Drop 8 month time point
+meta_uci5x <- subset(metadata_all,
+                     study_name == "UCI_5XFAD" & age_group != "8 months")
+
+params_5x <- list(
+  study = "UCI_5XFAD",
+  model_name = "5xFAD (UCI)",
   ref_genotype = "5XFAD_noncarrier",
-  contrasts = list(c("genotype", "5XFAD_carrier", "5XFAD_noncarrier")),
-  group_cols = c("tissue", "sex", "ageDeath"),
+  contrasts = list(c("genotype", "5XFAD_carrier", "5XFAD_noncarrier"))
+)
+
+res_5x <- get_all_de_results(
+  meta_uci5x, counts, params_5x,
+  group_cols = c("tissue", "sex", "age_group"),
   model_vars = c("genotype")
 )
-# TODO write to file
+
+res_5x_mf <- get_all_de_results(
+  meta_uci5x, counts, params_5x,
+  group_cols = c("tissue", "age_group"),
+  model_vars = c("genotype", "sex")
+)
+
+write.csv(rbind(res_5x, res_5x_mf),
+          str_glue("data/de_output/{params_5x$study}_differential_expression.csv"),
+          row.names = FALSE, quote = FALSE)
+
+norm_5x <- get_norm_counts(meta_uci5x, counts, params_5x$model_name)
+write.csv(norm_5x,
+          str_glue("data/de_output/{params_5x$study}_normalized_expression.csv"),
+          row.names = FALSE, quote = FALSE)
 
 
 ## UCI_ABCA7 -------------------------------------------------------------------
 
-# TODO this data has rnaBatch with a bad split:
-#   Abca7-V1599M_homozygous and 5XFAD_carrier; Abca7-V1599M_homozygous were
-#     sequenced across two batches
-#   5XFAD_carrier and 5XFAD_noncarrier were sequenced across two other batches
-#   No overlap between the pairs of genotypes
+# This data has rnaBatch with a bad split:
+#   'Abca7-V1599M_homozygous' and '5XFAD_carrier; Abca7-V1599M_homozygous' were
+#     extracted together across two batches
+#   `5XFAD_carrier` and `5XFAD_noncarrier` were extracted together across two
+#     other batches
+#   Our comparisons are between genotypes with no batch overlap
 # rnaBatch also has exact overlap with age of death, so each age of death contains
 # one batch per pair of genotypes.
 # Given this, we can't actually batch correct this data, which is not ideal.
-res_abca7 <- get_all_de_results(
-  metadata_all, counts,
+
+params_abca7 <- list(
   study = "UCI_ABCA7",
+  model_name = "Abca7*V1599M",
   ref_genotype = "5XFAD_noncarrier",
-  contrasts = list(c("genotype", "5XFAD_carrier", "5XFAD_noncarrier"),
-                   c("genotype", "Abca7-V1599M_homozygous", "5XFAD_noncarrier"),
-                   c("genotype", "5XFAD_carrier; Abca7-V1599M_homozygous", "5XFAD_noncarrier")),
-  group_cols = c("sex", "ageDeath"),
+  # We want Abca7-homozygous vs WT, and Abca7-5xFAD vs 5xFAD for the explorer
+  contrasts = list(c("genotype", "Abca7-V1599M_homozygous", "5XFAD_noncarrier"),
+                   c("genotype", "5XFAD_carrier; Abca7-V1599M_homozygous", "5XFAD_carrier"))
+)
+
+res_abca7 <- get_all_de_results(
+  metadata_all, counts, params_abca7,
+  group_cols = c("sex", "age_group"),
   model_vars = c("genotype")
 )
-# TODO write to file
+
+res_abca7_mf <- get_all_de_results(
+  metadata_all, counts, params_abca7,
+  group_cols = c("age_group"),
+  model_vars = c("genotype", "sex")
+)
+
+write.csv(rbind(res_abca7, res_abca7_mf),
+          str_glue("data/de_output/{params_abca7$study}_differential_expression.csv"),
+          row.names = FALSE, quote = FALSE)
+
+norm_abca7 <- get_norm_counts(subset(metadata_all, study_name == params_abca7$study),
+                              counts, params_abca7$model_name)
+write.csv(norm_abca7,
+          str_glue("data/de_output/{params_abca7$study}_normalized_expression.csv"),
+          row.names = FALSE, quote = FALSE)
 
 
 ## UCI_hAbeta_KI ---------------------------------------------------------------
 
 # There are no batches in this data
-res_abki <- get_all_de_results(
-  metadata_all, counts,
-  study = "UCI_hAbeta_KI",
-  ref_genotype = "hAbeta-KI_LoxP_WT",
-  contrasts = list(c("genotype", "hAbeta-KI_LoxP_homozygous", "hAbeta-KI_LoxP_WT")),
-  group_cols = c("sex", "ageDeath"),
-  model_vars = c("genotype")
-)
-# TODO write to file
+if ("UCI_hAbeta_KI" %in% metadata_all$study_name) {
+  res_abki <- get_all_de_results(
+    metadata_all, counts,
+    study = "UCI_hAbeta_KI",
+    ref_genotype = "hAbeta-KI_LoxP_WT",
+    contrasts = list(c("genotype", "hAbeta-KI_LoxP_homozygous", "hAbeta-KI_LoxP_WT")),
+    group_cols = c("sex", "ageDeath"),
+    model_vars = c("genotype")
+  )
+  # TODO write to file
+}
 
 ## UCI_Trem2_Cuprizone ---------------------------------------------------------------
 
@@ -416,36 +544,55 @@ res_abki <- get_all_de_results(
 #
 # Or do we pool both C57BL6J and 5XFAD_noncarrier into one "WT" genotype?
 
-res_trem2cup <- get_all_de_results(
-  metadata_all, counts, study = "UCI_Trem2_Cuprizone",
-  ref_genotype = "5XFAD_noncarrier",
-  contrasts = list("??"),
-  group_cols = c("treatmentType"),
-  model_vars = c("rnaBatch", "genotype")
-)
+if ("UCI_Trem2_Cuprizone" %in% metadata_all$study_name) {
+  res_trem2cup <- get_all_de_results(
+    metadata_all, counts, study = "UCI_Trem2_Cuprizone",
+    ref_genotype = "5XFAD_noncarrier",
+    contrasts = list("??"),
+    group_cols = c("treatmentType"),
+    model_vars = c("rnaBatch", "genotype")
+  )
+}
 
 
 ## UCI_Trem2-R47H_NSS ---------------------------------------------------------------
 
-# TODO This data has all 3 batch variables filled in (libraryBatch,
-# sequencingBatch, rnaBatch). None of them are entirely unique combinations of
-# another even when split by age and sex. The best option is probably to paste
-# all the batches together to create a new batch variable. When split by age,
-# sex, and genotype, it looks like 5XFAD_noncarriers and 5XFAD_carriers were
-# sequenced across 1-2 overlapping batches at each sex/time point, and
-# Trem2-R47H_NSS_homozygous and 5XFAD_carrier; Trem2-R47H_NSS_homozygous were
-# sequenced across 1-2 other overlapping batches, with no overlap between the
-# two sets.
-res_trem2nss <- get_all_de_results(
-  metadata_all, counts,
+# This data has all 3 batch variables filled in (libraryBatch, sequencingBatch,
+# rnaBatch). None of them are entirely unique combinations of another even when
+# split by age and sex. All 3 batch variables have the same issues that the
+# Abca7 study does, where the genotypes we want to compare were extracted /
+# prepped / sequenced in separate batches.
+# - "libraryBatch" for the 12 month time point doesn't have this issue, however,
+#   the batches are only 2-3 mice.
+# Given this, we can't actually batch correct this data, which is not ideal.
+
+params_trem2nss <- list(
   study = "UCI_Trem2-R47H_NSS",
+  model_name = "Trem2-R47H_NSS",
   ref_genotype = "5XFAD_noncarrier",
-  contrasts = list(c("genotype", "5XFAD_carrier", "5XFAD_noncarrier"),
-                   c("genotype", "Trem2-R47H_NSS_homozygous", "5XFAD_noncarrier"),
-                   c("genotype", "5XFAD_carrier; Trem2-R47H_NSS_homozygous", "5XFAD_noncarrier")),
-  group_cols = c("sex", "ageDeath"),
-  model_vars = c("batch", "genotype")
+  # We want Trem2R47H vs WT, and Trem2R47H-5xFAD vs 5xFAD for the explorer
+  contrasts = list(c("genotype", "Trem2-R47H_NSS_homozygous", "5XFAD_noncarrier"),
+                   c("genotype", "5XFAD_carrier; Trem2-R47H_NSS_homozygous", "5XFAD_carrier"))
 )
 
+res_trem2nss <- get_all_de_results(
+  metadata_all, counts, params_trem2nss,
+  group_cols = c("sex", "age_group"),
+  model_vars = c("genotype")
+)
 
+res_trem2nss_mf <- get_all_de_results(
+  metadata_all, counts, params_trem2nss,
+  group_cols = c("age_group"),
+  model_vars = c("genotype", "sex")
+)
 
+write.csv(rbind(res_trem2nss, res_trem2nss_mf),
+          str_glue("data/de_output/{params_trem2nss$study}_differential_expression.csv"),
+          row.names = FALSE, quote = FALSE)
+
+norm_trem2nss <- get_norm_counts(subset(metadata_all, study_name == params_trem2nss$study),
+                                 counts, params_trem2nss$model_name)
+write.csv(norm_trem2nss,
+          str_glue("data/de_output/{params_trem2nss$study}_normalized_expression.csv"),
+          row.names = FALSE, quote = FALSE)
