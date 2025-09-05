@@ -1,15 +1,18 @@
 # This script creates sample sheets from fastq files in the format needed for
 # the Nextflow pipeline nf-core/rnaseq. This involves getting a list of fastq
 # files from Synapse for each study and matching the files to the associated
-# specimenID in the harmonized metadata. Most fastq files are annotated with
-# the specimenID but some studies need extra handling for mismatches.
+# specimenID in the harmonized metadata. Most fastq files are annotated with the
+# specimenID but some studies need extra handling for mismatches.
 #
 # The following studies are currently accounted for in this script:
 #   Jax.IU.Pitt_5XFAD
 #   Jax.IU.Pitt_APOE4.Trem2.R47H
+#   Jax.IU.Pitt_LOAD2.PrimaryScreen
 #   UCI_3xTg-AD
 #   UCI_5XFAD
 #   UCI_ABCA7
+#   UCI_Bin1K358R
+#   UCI_Clu-h2kbKI
 #   UCI_hAbeta_KI
 #   UCI_PrimaryScreen
 #   UCI_Trem2_Cuprizone
@@ -22,10 +25,10 @@
 # filenames needs to be added below.
 #
 # After running this script, sample sheets were uploaded to Sage's Nextflow
-# Tower environment, and the nf-synapse pipeline was run to download all of
-# the fastq files and convert the sample sheets to point to their locations on
-# the S3 bucket of the environment. Then, the nf-core/rnaseq pipeline was run
-# with the updated sample sheets to align the data.
+# Tower environment, and the nf-synapse pipeline was run to download all of the
+# fastq files and convert the sample sheets to point to their locations on the
+# S3 bucket of the environment. Then, the nf-core/rnaseq pipeline was run with
+# the updated sample sheets to align the data.
 
 library(synapser)
 library(stringr)
@@ -145,6 +148,14 @@ for (N in 1:nrow(syn_ids)) {
 
     all_fastqs$specimenID[missing_inds] <- paste0(fastq_ids, "lh")
 
+  } else if (row$Study == "UCI_Clu-h2kbKI") {
+    # Fastqs for specimenID "12680lc" are in a folder marked "Deprecated" and
+    # should be excluded. There are 8 more fastq files in that folder for 4
+    # specimenIDs that don't exist in the metadata, so these are excluded as
+    # well.
+    all_fastqs <- subset(all_fastqs, specimenID != "12680lc" &
+                           specimenID %in% meta_filt$specimenID)
+
   } else if (row$Study == "UCI_hAbeta_KI") {
     # Remove some special characters (commas and parentheses) to match what's in
     # the metadata
@@ -169,7 +180,10 @@ for (N in 1:nrow(syn_ids)) {
     all_fastqs <- all_fastqs[keep, ]
   }
 
+  # Check for fastq files for specimens not in the metadata, and check for
+  # duplicate fastq files. Each specimenID should only have 2 files.
   stopifnot(all_fastqs$specimenID %in% meta_filt$specimenID)
+  stopifnot(all(table(all_fastqs$specimenID) == 2))
 
 
   ## Format sample sheet for NextFlow ------------------------------------------

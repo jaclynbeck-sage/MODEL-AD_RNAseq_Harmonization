@@ -8,9 +8,12 @@
 # The following studies are currently accounted for in this script:
 #   Jax.IU.Pitt_5XFAD
 #   Jax.IU.Pitt_APOE4.Trem2.R47H
+#   Jax.IU.Pitt_LOAD2.PrimaryScreen
 #   UCI_3xTg-AD
 #   UCI_5XFAD
 #   UCI_ABCA7
+#   UCI_Bin1K358R
+#   UCI_Clu-h2kbKI
 #   UCI_hAbeta_KI
 #   UCI_PrimaryScreen
 #   UCI_Trem2_Cuprizone
@@ -73,7 +76,19 @@ metadata <- lapply(1:nrow(metadata_list), function(N) {
 
   ## Study-specific fixes ------------------------------------------------------
 
-  if (row$Study == "UCI_5XFAD") {
+  if (row$Study == "Jax.IU.Pitt_LOAD2.PrimaryScreen") {
+    # Genotypes in this study leave off the "LOAD2" at the front and it needs to
+    # be added. We make this modification here instead of below with the rest of
+    # the genotype mapping so we don't affect genotypes from other studies.
+    geno_mods <- which(!grepl("LOAD2", individual_df$genotype) &
+                         !(individual_df$genotype %in% c("WT", "", "NA_Inconclusive")))
+    individual_df$genotype[geno_mods] <- paste0("LOAD2.",
+                                                individual_df$genotype[geno_mods])
+
+    # Change "WT" to "C57BL6J"
+    individual_df$genotype[individual_df$genotype == "WT"] <- "C57BL6J"
+
+  } else if (row$Study == "UCI_5XFAD") {
     # UCI_5XFAD: The specimen IDs in the assay metadata do not match what is in
     # the biospecimen metadata, so we need to fix them. In the assay metadata
     # they are of the format "<individualID>(H or C)_RNAseq", (e.g.
@@ -91,11 +106,36 @@ metadata <- lapply(1:nrow(metadata_list), function(N) {
                                      "NextSeq50[1|2|3]",
                                      "NextSeq500")
     biospec_df$samplingAge <- NA
+
   }
 
   # Studies Jax.IU.Pitt_5XFAD, Jax.IU.Pitt_APOE4.Trem2.R47H, UCI_3xTg-AD,
-  # UCI_ABCA7, UCI_PrimaryScreen, UCI_Trem2_Cuprizone, and UCI_Trem2-R47H_NSS
-  # need no specialized corrections in this section
+  # UCI_ABCA7, UCI_Bin1K358R, UCI_Clu-h2kbKI, UCI_PrimaryScreen,
+  # UCI_Trem2_Cuprizone, and UCI_Trem2-R47H_NSS need no specialized corrections
+  # in this section
+
+  # General corrections -- remove any rows with NA or "" IDs. Some files have
+  # empty rows at the end.
+  assay_df <- subset(assay_df,
+                     !is.na(specimenID) & nchar(specimenID) > 0)
+  biospec_df <- subset(biospec_df,
+                       !is.na(specimenID) & nchar(specimenID) > 0 &
+                         !is.na(individualID) & nchar(individualID) > 0)
+  individual_df <- subset(individual_df,
+                          !is.na(individualID) & nchar(individualID) > 0)
+
+  # Check for issues with specimenID / individualID in each file.
+  # If this section produces errors, the study needs corrections added above.
+  stopifnot(all(!is.na(assay_df$specimenID)) & all(nchar(assay_df$specimenID) > 0))
+  stopifnot(!any(duplicated(assay_df$specimenID)))
+  stopifnot(all(assay_df$specimenID %in% biospec_df$specimenID))
+
+  stopifnot(all(!is.na(biospec_df$specimenID)) & all(nchar(biospec_df$specimenID) > 0))
+  stopifnot(all(!is.na(biospec_df$individualID)) & all(nchar(biospec_df$individualID) > 0))
+  stopifnot(all(biospec_df$individualID %in% individual_df$individualID))
+
+  stopifnot(all(!is.na(individual_df$individualID)) & all(nchar(individual_df$individualID) > 0))
+  stopifnot(!any(duplicated(individual_df$individualID)))
 
 
   ## Merge all metadata together -----------------------------------------------
@@ -183,6 +223,7 @@ geno_map <- c("3xTg-AD_homozygous" = "3xTg-AD_carrier",
               "Homozygous" = "homozygous",
               "Heterozygous" = "heterozygous",
               "NA; NA" = NA,
+              "NA_Inconclusive" = NA,
               "PICALM_H458R_homozygous" = "Picalm-H458R_homozygous",
               "PICALM_H458R_noncarrier" = "Picalm-H458R_WT",
               "SPI1_homozygous" = "Spi1-rs1377416_homozygous",
@@ -202,6 +243,8 @@ for (G in 1:length(geno_map)) {
 
 # Genotypes should be semicolon-separated, not comma-separated
 metadata_combined$genotype <- str_replace(metadata_combined$genotype, ",", ";")
+
+# TODO the genotype names for LOAD2 Primary Screen may not be in the right format
 
 
 # Save to file and upload to Synapse -------------------------------------------

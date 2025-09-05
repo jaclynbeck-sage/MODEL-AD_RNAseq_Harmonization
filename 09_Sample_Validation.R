@@ -601,9 +601,11 @@ variants_trem2 <- get_variant_mismatches(metadata_all, geno_info,
 #   low quality: 1 UCI_PrimaryScreen
 #   no detected variants: 2 Jax.IU.Pitt_APOE4.Trem2.R47H, 3 UCI_PrimaryScreen
 #
-# Due to the generally low expression of Trem2 across all samples, it's possible
-# there wasn't enough coverage to hit the target region enough, so we do not
-# consider carrier mismatches as true mismatches.
+# The 2 Jax samples have expression of Trem2 that is consistent with other
+# carrier samples, not with WT samples, so these 2 samples are probably valid.
+# Due to the lowered expression of Trem2 in R47H carriers, it's possible there
+# wasn't enough coverage to hit the target region enough, so we do not consider
+# carrier mismatches as true mismatches.
 variants_merge_trem2 <- variants_trem2 %>%
   mutate(valid_trem2_r47h_variant = is_carrier |
            (!is_carrier & est_genotype != "carrier")) %>%
@@ -644,6 +646,7 @@ print(subset(valid_samples, !validated))
 write.csv(valid_samples, file.path("data", "Model_AD_valid_samples.csv"),
           row.names = FALSE)
 
+# TODO double-check Jax ages match this code
 meta_stats <- merge(metadata_all, valid_samples) %>%
   # Fix a few age timepoints for Jax studies
   mutate(
