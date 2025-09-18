@@ -17,28 +17,26 @@ library(synapser)
 library(stringr)
 library(dplyr)
 
-# Synapse IDs used in this script
-syn_metadata_file_id <- "syn61850266"
-syn_bam_files_id <- "syn63856101"
-syn_samplesheet_folder_id <- "syn62147112"
+file_syn_ids <- config::get("file_syn_ids", config = "default")
+folder_syn_ids <- config::get("folder_syn_ids", config = "default")
 
 synLogin(silent = TRUE)
-tmp_dir <- file.path("data", "tmp")
-samplesheet_dir <- file.path("data", "sample_sheets")
-provenance_dir <- file.path("data", "provenance_manifests")
+tmp_dir <- file.path("output", "tmp")
+samplesheet_dir <- file.path("output", "sample_sheets")
+provenance_dir <- file.path("output", "provenance_manifests")
 
 dir.create(tmp_dir, showWarnings = FALSE)
 dir.create(samplesheet_dir, showWarnings = FALSE)
 dir.create(provenance_dir, showWarnings = FALSE)
 
-meta_file <- synGet(syn_metadata_file_id, downloadLocation = tmp_dir,
+meta_file <- synGet(file_syn_ids$merged_metadata, downloadLocation = tmp_dir,
                     ifcollision = "overwrite.local")
 metadata <- read.csv(meta_file$path)
 
 meta_provenance <- c(meta_file$id, meta_file$versionNumber, meta_file$name)
 names(meta_provenance) <- c("id", "versionNumber", "name")
 
-bam_folders <- synGetChildren(syn_bam_files_id)$asList()
+bam_folders <- synGetChildren(folder_syn_ids$bams)$asList()
 names(bam_folders) <- sapply(bam_folders, "[[", "name")
 
 
@@ -51,6 +49,12 @@ for (study in unique(metadata$study_name)) {
 
   ## Get a list of all bam files -----------------------------------------------
   bam_files <- synGetChildren(bam_folders[[study]])$asList()
+
+  if (length(bam_files) == 0) {
+    message(str_glue("WARNING: {study} BAM folder is empty. Skipping..."))
+    next
+  }
+
   bam_files <- as.data.frame(do.call(rbind, bam_files)) %>%
     select(name, id, versionNumber)
 
@@ -103,8 +107,9 @@ for (study in unique(metadata$study_name)) {
                     provenance$versionNumber,
                     sep = ".")
 
-  github_link <- "https://github.com/jaclynbeck-sage/MODEL-AD_RNAseq_Harmonization/blob/main/05_NF_Create_BAM_Sample_Sheets.R"
-  syn_file <- File(samplesheet_filename, parent = syn_samplesheet_folder_id)
+  github_link <- paste0(config::get("github_repo_url", config = "default"),
+                        "/blob/main/05_NF_Create_BAM_Sample_Sheets.R")
+  syn_file <- File(samplesheet_filename, parent = folder_syn_ids$nf_samplesheets)
   synStore(syn_file,
            used = used_ids,
            executed = github_link,
@@ -115,17 +120,19 @@ for (study in unique(metadata$study_name)) {
 
   if (!all(bam_files$specimenID %in% meta_filt$specimenID)) {
     extra <- setdiff(bam_files$specimenID, meta_filt$specimenID)
-    msg <- paste("WARNING:", study, "has BAM files for", length(extra),
-                 "specimens that do not exist in the metadata:",
-                 paste(sort(extra), collapse = ", "))
+    msg <- str_glue(
+      "WARNING: {study} has BAM files for {length(extra)} specimen(s) that do ",
+      "not exist in the metadata: {paste(sort(extra), collapse = ", ")}"
+    )
     message(msg)
   }
 
   if (!all(meta_filt$specimenID %in% bam_files$specimenID)) {
     missing <- setdiff(meta_filt$specimenID, bam_files$specimenID)
-    msg <- paste("WARNING:", study, "is missing fastq files for",
-                 length(missing), "specimens:",
-                 paste(sort(missing), collapse = ", "))
+    msg <- str_glue(
+      "WARNING: {study} is missing BAM files for {length(missing)} ",
+      "specimen(s): {paste(sort(missing), collapse = ", ")}"
+    )
     message(msg)
   }
 }

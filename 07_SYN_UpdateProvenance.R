@@ -6,8 +6,8 @@
 # metadata, fastq files, genome reference, and NextFlow pipeline input files.
 #
 # This script is a little fragile because of string matching and assumes:
-#   1. Step 02 has been run in the same directory so that provenance files exist
-#      in the "data/provenance_manifests" directory.
+#   1. Step 03 has been run in the same directory so that provenance files exist
+#      in the "output/provenance_manifests" directory.
 #   2. The NextFlow config and samplesheet files contain the study name in the
 #      filename exactly as specified in the Model_AD_SynID_list.csv file
 #   3. The RSEM counts files all exist in a folder under syn51132850, and that
@@ -20,19 +20,16 @@ library(stringr)
 
 # TODO eventually maybe most of this string matching can be done with annotations
 
-# Synapse IDs used in this script that are not in Model_AD_SynID_list.csv
-syn_study_folders_id <- "syn51132850"
-syn_nf_config_folder_id <- "syn62147114"
-syn_nf_samplesheet_folder_id <- "syn62147112"
+folder_syn_ids <- config::get("folder_syn_ids", config = "default")
 
 synLogin(silent = TRUE)
 
-provenance_dir <- file.path("data", "provenance_manifests")
+provenance_dir <- file.path("output", "provenance_manifests")
 syn_id_list <- read.csv(file.path("data", "Model_AD_SynID_list.csv"),
                         comment.char = "#")
 
 # Get all the folders of counts files that exist on Synapse
-study_folders <- synGetChildren(syn_study_folders_id,
+study_folders <- synGetChildren(folder_syn_ids$raw_counts,
                                 includeTypes = list("folder"))$asList()
 study_names <- sapply(study_folders, "[[", "name")
 
@@ -49,15 +46,15 @@ if (any(!(study_names %in% syn_id_list$Study))) {
                 "Model_AD_SynID_list.csv: \n",
                 paste(missing, collapse = ", "),
                 "\nThese studies will be ignored.")
-  warning(msg)
+  message(msg)
 
   study_folders <- study_folders[study_names %in% syn_id_list$Study]
   study_names <- sapply(study_folders, "[[", "name")
 }
 
 # Get NextFlow configuration files and samplesheet files
-nf_config_files <- synGetChildren(syn_nf_config_folder_id)$asList()
-nf_samplesheet_files <- synGetChildren(syn_nf_samplesheet_folder_id)$asList()
+nf_config_files <- synGetChildren(folder_syn_ids$nf_configs)$asList()
+nf_samplesheet_files <- synGetChildren(folder_syn_ids$nf_samplesheets)$asList()
 
 nf_config_names <- sapply(nf_config_files, "[[", "name")
 nf_samplesheet_names <- sapply(nf_samplesheet_files, "[[", "name")
@@ -85,7 +82,7 @@ for (folder in study_folders) {
     # Here we replace "rsem.merged" with the study name.
     if (!grepl(study, sf$name)) {
       new_name <- str_replace(sf$name, "rsem\\.merged", study)
-      print(paste("Renaming", sf$name, "to", new_name))
+      print(str_glue("Renaming {sf$name} to {new_name}"))
 
       changeFileMetaData(sf$id,
                          downloadAs = new_name,

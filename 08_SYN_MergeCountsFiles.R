@@ -25,19 +25,19 @@ library(stringr)
 library(dplyr)
 library(purrr)
 
-# Synapse IDs used in this script
-syn_study_folders_id <- "syn51132850"
+folder_syn_ids <- config::get("folder_syn_ids", config = "default")
 
 syn_id_list <- read.csv(file.path("data", "Model_AD_SynID_list.csv"),
                         comment.char = "#")
 
 synLogin(silent = TRUE)
 
-github <- "https://github.com/jaclynbeck-sage/MODEL-AD_RNAseq_Harmonization/blob/main/04_SYN_MergeCountsFiles.R"
-tmp_dir <- file.path("data", "tmp")
+github <- paste0(config::get("github_repo_url", config = "default"),
+                 "/blob/main/04_SYN_MergeCountsFiles.R")
+tmp_dir <- file.path("output", "tmp")
 
 # Get all the folders of counts files that exist on Synapse
-study_folders <- synGetChildren(syn_study_folders_id,
+study_folders <- synGetChildren(folder_syn_ids$raw_counts,
                                 includeTypes = list("folder"))$asList()
 study_names <- sapply(study_folders, "[[", "name")
 
@@ -54,7 +54,7 @@ if (any(!(study_names %in% syn_id_list$Study))) {
                 "Model_AD_SynID_list.csv: \n",
                 paste(missing, collapse = ", "),
                 "\nThese studies will be ignored.")
-  warning(msg)
+  message(msg)
 
   study_folders <- study_folders[study_names %in% syn_id_list$Study]
   study_names <- sapply(study_folders, "[[", "name")
@@ -67,6 +67,11 @@ counts_list <- lapply(study_folders, function(study) {
   study_files <- synGetChildren(study$id,
                                 includeTypes = list("file"))
   study_files <- study_files$asList()
+
+  if (length(study_files) == 0) {
+    message(str_glue("WARNING: {study$name} raw counts folder is empty. Skipping..."))
+    return(NULL)
+  }
 
   # Get whether each file is gene_counts, gene_tpm, transcript_counts, or
   # transcript_tpm
@@ -108,6 +113,8 @@ counts_list <- lapply(study_folders, function(study) {
   return(file_contents)
 })
 
+counts_list <- counts_list[lengths(counts_list) > 0] # Remove any NULL entries
+
 # counts_list is a list where each item corresponds to a single study, and the
 # item is a file_contents list as described above.
 
@@ -120,6 +127,7 @@ counts_list <- lapply(study_folders, function(study) {
 for (file_type in names(counts_list[[1]])) {
   # Extract all items named with <file_type> from each sub-list in counts_list
   file_info <- lapply(counts_list, "[[", file_type)
+  print(file_type)
 
   # Extract the "counts" data frame from each sub-list in file_info, then
   # merge all the data frames together using gene_id and transcript_id as keys.
@@ -147,7 +155,7 @@ for (file_type in names(counts_list[[1]])) {
   file_name <- file.path(tmp_dir, str_glue("Model-AD_all_studies.{file_type}.tsv"))
   write.table(counts, file_name, quote = FALSE, row.names = FALSE, sep = "\t")
 
-  syn_file <- File(file_name, parent = syn_study_folders_id)
+  syn_file <- File(file_name, parent = folder_syn_ids$raw_counts)
   synStore(syn_file, forceVersion = FALSE, used = provenance,
            executed = github)
 }

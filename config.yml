@@ -1,0 +1,28 @@
+default:
+  # This GitHub repository, for adding to provenance
+  github_repo_url: "https://github.com/jaclynbeck-sage/MODEL-AD_RNAseq_Harmonization"
+
+  # ID for querying datasets on the AD Knowledge Portal
+  adkp_query_id: "syn11346063"
+
+  # Synapse IDs that never change
+  folder_syn_ids:
+    staging: "syn25882599"        # Top-level "Staging" folder of the project
+    genotype_validation: "syn63913842"  # Staging/Genotype Validation
+    metadata: "syn61850200"             # Staging/Metadata
+    nextflow_input: "syn62147109"       # Staging/Nextflow Pipeline Input
+    nf_samplesheets: "syn62147112"      # Staging/Nextflow Pipeline Input/Sample Sheets
+    nf_configs: "syn62147114"           # Staging/Nextflow Pipeline Input/Configuration
+    reference_genomes: "syn61779396"    # Staging/Reference Genomes
+    bams: "syn63856101"           # Staging/Gene Expression (RNA Seq)/BAM Files
+    norm_counts: "syn51132852"    # Staging/Gene Expression (RNA Seq)/Normalized Counts
+    raw_counts: "syn51132850"     # Staging/Gene Expression (RNA Seq)/Raw Gene Counts
+
+  # Individual files should have the version specified
+  file_syn_ids:
+    merged_metadata: "syn61850266.10" # Staging/Metadata/Model_AD_merged_metadata.csv
+    symbol_map: "syn62063692.2"       # Staging/Metadata/universal_reference_symbol_map.csv
+    merged_counts: "syn62690577.??"   # Staging/Gene Expression (RNA Seq)/Raw Gene Counts/Model-AD_all_studies.gene_counts.tsv
+    intervals: "syn69046595.3"        # Staging/Reference Genomes/intervals_universal_genome.bed
+    ref_fasta: "syn62035247.3"        # Staging/Reference Genomes/universal_MODEL_AD_reference.fa.gz
+    ref_gtf: "syn62035250.2"          # Staging/Reference Genomes/universal_MODEL_AD_reference.gtf.gz

@@ -29,11 +29,10 @@ library(synapser)
 library(stringr)
 library(dplyr)
 
-# Synapse IDs used in this script that are not in Model_AD_SynID_list.csv
-syn_metadata_folder_id <- "syn61850200"
+folder_syn_ids <- config::get("folder_syn_ids", config = "default")
 
 synLogin(silent = TRUE)
-tmp_dir <- file.path("data", "tmp")
+tmp_dir <- file.path("output", "tmp")
 dir.create(tmp_dir, showWarnings = FALSE)
 
 metadata_list <- read.csv(file.path("data", "Model_AD_SynID_list.csv"),
@@ -249,16 +248,17 @@ metadata_combined$genotype <- str_replace(metadata_combined$genotype, ",", ";")
 
 # Save to file and upload to Synapse -------------------------------------------
 
-write.csv(metadata_combined, file.path("data", "Model_AD_merged_metadata.csv"),
+write.csv(metadata_combined, file.path("output", "Model_AD_merged_metadata.csv"),
           row.names = FALSE, quote = FALSE)
 
-syn_file <- File(file.path("data", "Model_AD_merged_metadata.csv"),
-                 parent = syn_metadata_folder_id)
+syn_file <- File(file.path("output", "Model_AD_merged_metadata.csv"),
+                 parent = folder_syn_ids$metadata)
 
 all_syn_ids <- c(metadata_list$Metadata_Assay,
                  metadata_list$Metadata_Biospecimen,
                  metadata_list$Metadata_Individual)
-github_link <- "https://github.com/jaclynbeck-sage/MODEL-AD_RNAseq_Harmonization/blob/main/01_Harmonize_Metadata.R"
+github_link <- paste0(config::get("github_repo_url", config = "default"),
+                      "/blob/main/02_Harmonize_Metadata.R")
 
 synStore(syn_file,
          used = all_syn_ids,

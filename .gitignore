@@ -2,4 +2,9 @@
 *.DS_Store
 .Rhistory
 *_cache
-tmp
+tmp*
+*scratch*
+output
+*.txt
+*.bed
+*.xlsx

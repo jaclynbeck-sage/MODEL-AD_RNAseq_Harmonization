@@ -20,7 +20,7 @@
 # The CSV file "Model_AD_SynID_list.csv" was created by hand and lists the
 # Synapse IDs of all metadata files and the Synapse IDs of the folders containing
 # fastq files. To add a new study to this process, a row needs to be added for
-# that study in this CSV file, "01_Harmonize_Metadata.R" needs to be re-run to
+# that study in this CSV file, "02_Harmonize_Metadata.R" needs to be re-run to
 # incorporate the metadata for that new study, and any special handling of fastq
 # filenames needs to be added below.
 #
@@ -34,17 +34,14 @@ library(synapser)
 library(stringr)
 library(dplyr)
 
-# Synapse IDs used in this script that are not in Model_AD_SynID_list.csv
-syn_metadata_file_id <- "syn61850266"
-syn_ref_fasta_id <- "syn62035247"
-syn_ref_gtf_id <- "syn62035250"
-syn_samplesheet_folder_id <- "syn62147112"
-syn_portal_query_id <- "syn11346063"
+file_syn_ids <- config::get("file_syn_ids", config = "default")
+folder_syn_ids <- config::get("folder_syn_ids", config = "default")
+syn_portal_query_id <- config::get("adkp_query_id", config = "default")
 
 synLogin(silent = TRUE)
-tmp_dir <- file.path("data", "tmp")
-samplesheet_dir <- file.path("data", "sample_sheets")
-provenance_dir <- file.path("data", "provenance_manifests")
+tmp_dir <- file.path("output", "tmp")
+samplesheet_dir <- file.path("output", "sample_sheets")
+provenance_dir <- file.path("output", "provenance_manifests")
 
 dir.create(tmp_dir, showWarnings = FALSE)
 dir.create(samplesheet_dir, showWarnings = FALSE)
@@ -53,12 +50,13 @@ dir.create(provenance_dir, showWarnings = FALSE)
 syn_ids <- read.csv(file.path("data", "Model_AD_SynID_list.csv"),
                     comment.char = "#")
 
-meta_file <- synGet(syn_metadata_file_id, downloadLocation = tmp_dir,
+meta_file <- synGet(file_syn_ids$merged_metadata,
+                    downloadLocation = tmp_dir,
                     ifcollision = "overwrite.local")
 metadata <- read.csv(meta_file$path)
 
-ref_fasta <- synGet(syn_ref_fasta_id, downloadFile = FALSE)
-ref_gtf <- synGet(syn_ref_gtf_id, downloadFile = FALSE)
+ref_fasta <- synGet(file_syn_ids$ref_fasta, downloadFile = FALSE)
+ref_gtf <- synGet(file_syn_ids$ref_gtf, downloadFile = FALSE)
 
 meta_provenance <- rbind(
   c(meta_file$id, meta_file$versionNumber, meta_file$name),
@@ -79,17 +77,21 @@ for (N in 1:nrow(syn_ids)) {
 
   # Query the portal -- this query will work correctly for all studies except
   # UCI_ABCA7
-  query <- paste0("SELECT * FROM ", syn_portal_query_id, " WHERE ",
-                  "( ( \"assay\" HAS ( 'long-read rnaSeq', 'rnaSeq' ) ) AND ",
-                  "( \"fileFormat\" = 'fastq' ) AND ",
-                  "( \"isMultiSpecimen\" = 'false' OR \"isMultiSpecimen\" IS NULL ) AND ",
-                  "( \"study\" HAS ( '", row$Study, "' ) ) )")
+  query <- str_glue(
+    "SELECT * FROM {syn_portal_query_id} WHERE ",
+    "( ( \"assay\" HAS ( 'long-read rnaSeq', 'rnaSeq' ) ) AND ",
+    "( \"fileFormat\" = 'fastq' ) AND ",
+    "( \"isMultiSpecimen\" = 'false' OR \"isMultiSpecimen\" IS NULL ) AND ",
+    "( \"study\" HAS ( '{row$Study}' ) ) )"
+  )
 
   # UCI_ABCA7 fastq files are not all properly annotated
   if (row$Study == "UCI_ABCA7") {
-    query <- paste0("SELECT * FROM ", syn_portal_query_id, " WHERE ",
-                    "( ( \"name\" LIKE '%fq.gz%' ) ) AND ",
-                    "( ( ( \"study\" HAS ( '", row$Study, "' ) ) ) )")
+    query <- str_glue(
+      "SELECT * FROM {syn_portal_query_id} WHERE ",
+      "( ( \"name\" LIKE '%fq.gz%' ) ) AND ",
+      "( ( ( \"study\" HAS ( '{row$Study}' ) ) ) )"
+    )
   }
 
   result <- synTableQuery(query, includeRowIdAndRowVersion = FALSE)
@@ -221,8 +223,9 @@ for (N in 1:nrow(syn_ids)) {
                     samplesheet_provenance$currentVersion,
                     sep = ".")
 
-  github_link <- "https://github.com/jaclynbeck-sage/MODEL-AD_RNAseq_Harmonization/blob/main/02_NF_CreateSampleSheets.R"
-  syn_file <- File(samplesheet_filename, parent = syn_samplesheet_folder_id)
+  github_link <- paste0(config::get("github_repo_url", config = "default"),
+                        "/blob/main/03_NF_Create_FASTQ_Sample_Sheets.R")
+  syn_file <- File(samplesheet_filename, parent = folder_syn_ids$nf_samplesheets)
   synStore(syn_file,
            used = used_ids,
            executed = github_link,
@@ -233,17 +236,19 @@ for (N in 1:nrow(syn_ids)) {
 
   if (!all(all_fastqs$specimenID %in% meta_filt$specimenID)) {
     extra <- setdiff(all_fastqs$specimenID, meta_filt$specimenID)
-    msg <- paste("WARNING:", row$Study, "has", length(extra), "fastq files for",
-                 "specimens that do not exist in the metadata:",
-                 paste(sort(extra), collapse = ", "))
+    msg <- str_glue(
+      "WARNING: {row$Study} has {length(extra)} fastq files for specimen(s) ",
+      "that do not exist in the metadata: {paste(sort(extra), collapse = ", ")}"
+    )
     message(msg)
   }
 
   if (!all(meta_filt$specimenID %in% all_fastqs$specimenID)) {
     missing <- setdiff(meta_filt$specimenID, all_fastqs$specimenID)
-    msg <- paste("WARNING:", row$Study, "is missing fastq files for",
-                 length(missing), "specimens:",
-                 paste(sort(missing), collapse = ", "))
+    msg <- str_glue(
+      "WARNING: {row$Study} is missing fastq files for {length(missing)} ",
+      "specimen(s): {paste(sort(missing), collapse = ", ")}"
+    )
     message(msg)
   }
 }
