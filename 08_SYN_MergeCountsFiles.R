@@ -135,6 +135,10 @@ for (file_type in names(counts_list[[1]])) {
   counts <- purrr::reduce(counts, merge, by = c("gene_id", "transcript_id"),
                           all = TRUE)
 
+  # Set NA values to 0: Some data sets were run before adding CLU to the genome
+  # and won't have CLU in the set of genes.
+  counts[is.na(counts)] <- 0
+
   # Extract the "provenance" vector from each sub-list in file_info
   provenance <- sapply(file_info, "[[", "provenance")
 

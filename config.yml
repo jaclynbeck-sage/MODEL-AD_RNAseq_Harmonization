@@ -21,8 +21,8 @@ default:
   # Individual files should have the version specified
   file_syn_ids:
     merged_metadata: "syn61850266.10" # Staging/Metadata/Model_AD_merged_metadata.csv
-    symbol_map: "syn62063692.2"       # Staging/Metadata/universal_reference_symbol_map.csv
-    merged_counts: "syn62690577.??"   # Staging/Gene Expression (RNA Seq)/Raw Gene Counts/Model-AD_all_studies.gene_counts.tsv
-    intervals: "syn69046595.3"        # Staging/Reference Genomes/intervals_universal_genome.bed
+    merged_counts: "syn62690577.6"    # Staging/Gene Expression (RNA Seq)/Raw Gene Counts/Model-AD_all_studies.gene_counts.tsv
+    symbol_map: "syn62063692.2"       # Staging/Reference Genomes/universal_reference_symbol_map.csv
+    intervals: "syn69046595.5"        # Staging/Reference Genomes/intervals_universal_genome.bed
     ref_fasta: "syn62035247.3"        # Staging/Reference Genomes/universal_MODEL_AD_reference.fa.gz
     ref_gtf: "syn62035250.2"          # Staging/Reference Genomes/universal_MODEL_AD_reference.gtf.gz
