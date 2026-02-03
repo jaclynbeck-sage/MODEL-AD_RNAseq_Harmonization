@@ -2,9 +2,15 @@
 *.DS_Store
 .Rhistory
 *_cache
+*_files
 tmp*
 *scratch*
 output
 *.txt
 *.bed
 *.xlsx
+*.log
+*.tex
+*.pdf
+*.md
+*.csv
