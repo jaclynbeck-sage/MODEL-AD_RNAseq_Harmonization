@@ -30,13 +30,18 @@ library(stringr)
 library(dplyr)
 
 folder_syn_ids <- config::get("folder_syn_ids", config = "default")
+studies <- config::get("studies", config = "default")
 
 synLogin(silent = TRUE)
 tmp_dir <- file.path("output", "tmp")
 dir.create(tmp_dir, showWarnings = FALSE)
 
 metadata_list <- read.csv(file.path("data", "Model_AD_SynID_list.csv"),
-                          comment.char = "#")
+                          comment.char = "#") |>
+  subset(Study %in% studies)
+
+stopifnot(all(studies %in% metadata_list$Study))
+
 
 # Process each study's metadata ------------------------------------------------
 
@@ -105,7 +110,6 @@ metadata <- lapply(1:nrow(metadata_list), function(N) {
                                      "NextSeq50[1|2|3]",
                                      "NextSeq500")
     biospec_df$samplingAge <- NA
-
   }
 
   # Studies Jax.IU.Pitt_5XFAD, Jax.IU.Pitt_APOE4.Trem2.R47H, UCI_3xTg-AD,
@@ -141,45 +145,23 @@ metadata <- lapply(1:nrow(metadata_list), function(N) {
 
   # Only keep rows that exist in all data frames so we only retain RNA
   # seq-related samples.
-  combined_df <- merge(assay_df, biospec_df, all = FALSE) %>%
+  combined_df <- merge(assay_df, biospec_df, all = FALSE) |>
     merge(individual_df, all = FALSE)
 
-  combined_df$study_name <- row$Study
+  combined_df$study <- row$Study
 
 
   ## Fix some specimenIDs post-merge -------------------------------------------
 
-  # UCI_hAbeta_KI has parenthesis in some specimenIDs, which we remove to avoid
-  # issues downstream
-  combined_df$specimenID <- str_replace(combined_df$specimenID, "\\(", "")
-  combined_df$specimenID <- str_replace(combined_df$specimenID, "\\)", "")
-
-  # UCI_hAbeta_KI has commas in some individualIDs and specimenIDs. The commas
-  # will cause problems with CSV files downstream so we remove them here.
-  combined_df$specimenID <- str_replace(combined_df$specimenID, "\\,", "")
-  combined_df$individualID <- str_replace(combined_df$individualID, "\\,", "")
-
   # What the specimen IDs will look like when the counts files are read in by
   # R, to make it easier to match to the metadata. "R_safe_specimenID" is
-  # for reading in individual study files, while "merged_file_specimenID" is
-  # what they will look like in the merged counts files containing all studies.
+  # for reading in individual study files, while "unique_specimenID" is
+  # a specimenID guaranteed to be unique across all studies, since some studies
+  # share some specimenIDs.
   combined_df$R_safe_specimenID <- make.names(combined_df$specimenID)
-  combined_df$merged_file_specimenID <- make.names(
-    paste(combined_df$study_name, combined_df$specimenID, sep = ".")
+  combined_df$unique_specimenID <- make.names(
+    paste(combined_df$study, combined_df$specimenID, sep = ".")
   )
-
-  # General fix to all studies, we need the "treatmentType" and "treatmentDose"
-  # columns for the Cuprizone study but some of the other studies don't have
-  # these fields. UCI_hAbeta_KI is missing "specimenIdSource"
-  if (!hasName(combined_df, "treatmentType")) {
-    combined_df$treatmentType <- NA
-  }
-  if (!hasName(combined_df, "treatmentDose")) {
-    combined_df$treatmentDose <- NA
-  }
-  if (!hasName(combined_df, "specimenIdSource")) {
-    combined_df$specimenIdSource <- NA
-  }
 
 
   ## Create final study-specific data frame ------------------------------------
@@ -187,12 +169,16 @@ metadata <- lapply(1:nrow(metadata_list), function(N) {
   # Filter to columns of interest and ensure that all columns are in the same
   # order across all studies. Also make sure all rows are unique (some studies
   # have duplicate rows in one or more files).
-  combined_df <- combined_df %>%
-    select(individualID, specimenID, R_safe_specimenID, merged_file_specimenID,
-           platform, RIN, rnaBatch, libraryBatch, sequencingBatch, organ,
-           specimenIdSource, tissue, samplingAge, individualIdSource,
-           treatmentType, treatmentDose, sex, ageDeath, ageDeathUnits, genotype,
-           genotypeBackground, modelSystemName, study_name) %>%
+  combined_df <- combined_df |>
+    select(
+      # individual metadata
+      study, individualID, specimenID, R_safe_specimenID, unique_specimenID,
+      sex, ageDeath, ageDeathUnits, genotype, genotypeBackground,
+      # biospec metadata
+      tissue,
+      # assay metadata
+      platform, RIN, rnaBatch, libraryBatch, sequencingBatch
+    ) |>
     distinct()
   return(combined_df)
 })
@@ -204,35 +190,33 @@ metadata_combined <- do.call(rbind, metadata)
 # Fixes to genotype names ------------------------------------------------------
 
 # Standardize all genotypes to the MODEL-AD approved values.
-# Note: "C57BL6J" doesn't exist on the approved list but I think it's ok to
-#       leave it as-is since it's used as a general control for multiple
-#       genotypes.
-# Note: "Trem2-KO" and "Trem2-R47H_CSS_homozygous" don't exist on the approved
-#       list but should be on it, so we leave these values as-is.
-geno_map <- c("3xTg-AD_homozygous" = "3xTg-AD_carrier",
-              "3XTg-AD_noncarrier" = "3xTg-AD_noncarrier",
-              "5XFAD_hemizygous" = "5XFAD_carrier",
-              "Abca7_V1599M_homozygous" = "Abca7-V1599M_homozygous",
-              "Abca7V1599M_noncarrier" = "Abca7-V1599M_WT",
-              "ABI3_S209F_homozygous" = "Abi3-S209F_homozygous",
-              "ABI3_S209F_noncarrier" = "Abi3-S209F_WT",
-              "BIN1_K358R_noncarrier" = "Bin1-K358R_WT",
-              "hABKI  HO" = "hAbeta-KI_LoxP_homozygous",
-              "hABKI  WT" = "hAbeta-KI_LoxP_WT",
-              "Homozygous" = "homozygous",
-              "Heterozygous" = "heterozygous",
-              "NA; NA" = NA,
-              "NA_Inconclusive" = NA,
-              "PICALM_H458R_homozygous" = "Picalm-H458R_homozygous",
-              "PICALM_H458R_noncarrier" = "Picalm-H458R_WT",
-              "SPI1_homozygous" = "Spi1-rs1377416_homozygous",
-              "SPI1_noncarrier" = "Spi1-rs1377416_WT",
-              "Trem2_R47H_homozygous" = "Trem2-R47H_homozygous",
-              "Trem2_R47H_noncarrier" = "Trem2-R47H_WT",
-              "TREM2R47H_heterozygous" = "Trem2-R47H_heterozygous",
-              "TREM2R47H_homozygous" = "Trem2-R47H_homozygous",
-              "TREM2R47H_noncarrier" = "Trem2-R47H_WT"
-              )
+geno_map <- c(
+  "3xTg-AD_homozygous" = "3xTg-AD_carrier",
+  "3XTg-AD_noncarrier" = "3xTg-AD_noncarrier",
+  "5XFAD_hemizygous" = "5XFAD_carrier",
+  "Homozygous" = "homozygous",
+  "Heterozygous" = "heterozygous",
+  "NA_Inconclusive" = NA,
+  # Not relevant to set of studies used for analysis but saving for
+  # reproducibility.
+  "Abca7_V1599M_homozygous" = "Abca7-V1599M_homozygous",
+  "Abca7V1599M_noncarrier" = "Abca7-V1599M_WT",
+  "ABI3_S209F_homozygous" = "Abi3-S209F_homozygous",
+  "ABI3_S209F_noncarrier" = "Abi3-S209F_WT",
+  "BIN1_K358R_noncarrier" = "Bin1-K358R_WT",
+  "hABKI  HO" = "hAbeta-KI_LoxP_homozygous",
+  "hABKI  WT" = "hAbeta-KI_LoxP_WT",
+  "NA; NA" = NA,
+  "PICALM_H458R_homozygous" = "Picalm-H458R_homozygous",
+  "PICALM_H458R_noncarrier" = "Picalm-H458R_WT",
+  "SPI1_homozygous" = "Spi1-rs1377416_homozygous",
+  "SPI1_noncarrier" = "Spi1-rs1377416_WT",
+  "Trem2_R47H_homozygous" = "Trem2-R47H_homozygous",
+  "Trem2_R47H_noncarrier" = "Trem2-R47H_WT",
+  "TREM2R47H_heterozygous" = "Trem2-R47H_heterozygous",
+  "TREM2R47H_homozygous" = "Trem2-R47H_homozygous",
+  "TREM2R47H_noncarrier" = "Trem2-R47H_WT"
+)
 
 for (G in 1:length(geno_map)) {
   metadata_combined$genotype <- str_replace_all(metadata_combined$genotype,
@@ -242,6 +226,16 @@ for (G in 1:length(geno_map)) {
 
 # Genotypes should be semicolon-separated, not comma-separated
 metadata_combined$genotype <- str_replace(metadata_combined$genotype, ",", ";")
+
+
+# Standardize genotypeBackground values
+metadata_combined <- metadata_combined |>
+  mutate(genotypeBackground = case_match(
+    genotypeBackground,
+    c("B6", "C57BL6J")  ~ "C57BL/6J",
+    .default = genotypeBackground
+  ))
+
 
 # TODO the genotype names for LOAD2 Primary Screen may not be in the right format
 

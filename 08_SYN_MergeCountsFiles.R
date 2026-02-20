@@ -1,3 +1,5 @@
+# UPDATE: We are not merging the counts files anymore, this step is deprecated.
+#
 # This script finds all RSEM output files from all studies and merges them
 # together so there is one file containing all studies, per type of output data
 # (gene counts, gene tpm, transcript counts, or transcript tpm).
@@ -26,14 +28,18 @@ library(dplyr)
 library(purrr)
 
 folder_syn_ids <- config::get("folder_syn_ids", config = "default")
+studies <- config::get("studies", config = "default")
 
 syn_id_list <- read.csv(file.path("data", "Model_AD_SynID_list.csv"),
-                        comment.char = "#")
+                        comment.char = "#") |>
+  subset(Study %in% studies)
+
+stopifnot(all(studies %in% syn_id_list$Study))
 
 synLogin(silent = TRUE)
 
 github <- paste0(config::get("github_repo_url", config = "default"),
-                 "/blob/main/04_SYN_MergeCountsFiles.R")
+                 "/blob/main/08_SYN_MergeCountsFiles.R")
 tmp_dir <- file.path("output", "tmp")
 
 # Get all the folders of counts files that exist on Synapse

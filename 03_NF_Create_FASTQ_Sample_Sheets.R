@@ -37,6 +37,7 @@ library(dplyr)
 file_syn_ids <- config::get("file_syn_ids", config = "default")
 folder_syn_ids <- config::get("folder_syn_ids", config = "default")
 syn_portal_query_id <- config::get("adkp_query_id", config = "default")
+studies <- config::get("studies", config = "default")
 
 synLogin(silent = TRUE)
 tmp_dir <- file.path("output", "tmp")
@@ -48,12 +49,18 @@ dir.create(samplesheet_dir, showWarnings = FALSE)
 dir.create(provenance_dir, showWarnings = FALSE)
 
 syn_ids <- read.csv(file.path("data", "Model_AD_SynID_list.csv"),
-                    comment.char = "#")
+                    comment.char = "#") |>
+  subset(Study %in% studies)
+
+stopifnot(all(studies %in% syn_ids$Study))
 
 meta_file <- synGet(file_syn_ids$merged_metadata,
                     downloadLocation = tmp_dir,
                     ifcollision = "overwrite.local")
-metadata <- read.csv(meta_file$path)
+metadata <- read.csv(meta_file$path) |>
+  subset(study %in% studies)
+
+stopifnot(all(studies %in% metadata$study))
 
 ref_fasta <- synGet(file_syn_ids$ref_fasta, downloadFile = FALSE)
 ref_gtf <- synGet(file_syn_ids$ref_gtf, downloadFile = FALSE)
@@ -71,7 +78,7 @@ colnames(meta_provenance) <- c("id", "currentVersion", "name")
 for (N in 1:nrow(syn_ids)) {
   row <- syn_ids[N,]
   print(row$Study)
-  meta_filt <- subset(metadata, study_name == row$Study)
+  meta_filt <- subset(metadata, study == row$Study)
 
   ## Get a list of all fastqs available ----------------------------------------
 
@@ -96,7 +103,7 @@ for (N in 1:nrow(syn_ids)) {
 
   result <- synTableQuery(query, includeRowIdAndRowVersion = FALSE)
 
-  all_fastqs <- read.csv(result$filepath) %>%
+  all_fastqs <- read.csv(result$filepath) |>
     select(id, name, specimenID, currentVersion)
 
   # Get which fastqs are read 1 and read 2
@@ -158,12 +165,6 @@ for (N in 1:nrow(syn_ids)) {
     all_fastqs <- subset(all_fastqs, specimenID != "12680lc" &
                            specimenID %in% meta_filt$specimenID)
 
-  } else if (row$Study == "UCI_hAbeta_KI") {
-    # Remove some special characters (commas and parentheses) to match what's in
-    # the metadata
-    all_fastqs$specimenID <- str_replace_all(all_fastqs$specimenID,
-                                             ",|\\(|\\)", "")
-
   } else if (row$Study == "UCI_Trem2_Cuprizone") {
     # Some specimenIDs have an extra "w" in them
     all_fastqs$specimenID <- str_replace(all_fastqs$specimenID, "w", "")
@@ -190,12 +191,12 @@ for (N in 1:nrow(syn_ids)) {
 
   ## Format sample sheet for NextFlow ------------------------------------------
 
-  lines <- all_fastqs %>%
-            group_by(specimenID) %>%
+  lines <- all_fastqs |>
+            group_by(specimenID) |>
             summarize(fastq_1 = paste0("syn://", id[read == 1]),
                       fastq_2 = paste0("syn://", id[read == 2]),
                       strandedness = "auto",
-                      .groups = "drop") %>%
+                      .groups = "drop") |>
             dplyr::rename(sample = specimenID)
 
   samplesheet_filename <- file.path(samplesheet_dir,

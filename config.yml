@@ -5,6 +5,19 @@ default:
   # ID for querying datasets on the AD Knowledge Portal
   adkp_query_id: "syn11346063"
 
+  # Which studies to harmonize
+  studies: [
+    "Jax.IU.Pitt_5XFAD",
+    "Jax.IU.Pitt_APOE4.Trem2.R47H",
+    "UCI_3xTg-AD",
+    "UCI_5XFAD",
+    "UCI_ABCA7",
+    "UCI_Trem2-R47H_NSS",
+    "UCI_Clu-h2kbKI",
+    "UCI_Bin1K358R",
+    "Jax.IU.Pitt_LOAD2.PrimaryScreen"
+    ]
+
   # Synapse IDs that never change
   folder_syn_ids:
     staging: "syn25882599"        # Top-level "Staging" folder of the project
@@ -20,8 +33,7 @@ default:
 
   # Individual files should have the version specified
   file_syn_ids:
-    merged_metadata: "syn61850266.10" # Staging/Metadata/Model_AD_merged_metadata.csv
-    merged_counts: "syn62690577.6"    # Staging/Gene Expression (RNA Seq)/Raw Gene Counts/Model-AD_all_studies.gene_counts.tsv
+    merged_metadata: "syn61850266.13" # Staging/Metadata/Model_AD_merged_metadata.csv
     symbol_map: "syn62063692.2"       # Staging/Reference Genomes/universal_reference_symbol_map.csv
     intervals: "syn69046595.5"        # Staging/Reference Genomes/intervals_universal_genome.bed
     ref_fasta: "syn62035247.3"        # Staging/Reference Genomes/universal_MODEL_AD_reference.fa.gz

@@ -19,6 +19,7 @@ library(dplyr)
 
 file_syn_ids <- config::get("file_syn_ids", config = "default")
 folder_syn_ids <- config::get("folder_syn_ids", config = "default")
+studies <- config::get("studies", config = "default")
 
 synLogin(silent = TRUE)
 tmp_dir <- file.path("output", "tmp")
@@ -31,7 +32,10 @@ dir.create(provenance_dir, showWarnings = FALSE)
 
 meta_file <- synGet(file_syn_ids$merged_metadata, downloadLocation = tmp_dir,
                     ifcollision = "overwrite.local")
-metadata <- read.csv(meta_file$path)
+metadata <- read.csv(meta_file$path) |>
+  subset(study %in% studies)
+
+stopifnot(all(studies %in% metadata$study))
 
 meta_provenance <- c(meta_file$id, meta_file$versionNumber, meta_file$name)
 names(meta_provenance) <- c("id", "versionNumber", "name")
@@ -42,9 +46,9 @@ names(bam_folders) <- sapply(bam_folders, "[[", "name")
 
 # Create one sample sheet per study --------------------------------------------
 
-for (study in unique(metadata$study_name)) {
+for (study in unique(metadata$study)) {
   print(study)
-  meta_filt <- subset(metadata, study_name == study) %>%
+  meta_filt <- metadata[metadata$study == study, ] |>
     select(individualID, specimenID)
 
   ## Get a list of all bam files -----------------------------------------------
@@ -55,7 +59,7 @@ for (study in unique(metadata$study_name)) {
     next
   }
 
-  bam_files <- as.data.frame(do.call(rbind, bam_files)) %>%
+  bam_files <- as.data.frame(do.call(rbind, bam_files)) |>
     select(name, id, versionNumber)
 
   # specimenID is everything before ".markdup"
@@ -66,7 +70,7 @@ for (study in unique(metadata$study_name)) {
 
   # This will include BAM files with specimenIDs that don't exist in the
   # metadata, but the individualID will be NA
-  bam_files <- merge(bam_files, meta_filt, by = "specimenID", all.x = TRUE) %>%
+  bam_files <- merge(bam_files, meta_filt, by = "specimenID", all.x = TRUE) |>
     subset(file_type %in% c("bam", "bai"))
 
   # Check that we have an equal number of bams and bais
@@ -76,11 +80,11 @@ for (study in unique(metadata$study_name)) {
 
   ## Format sample sheet for NextFlow ------------------------------------------
 
-  lines <- bam_files %>%
-    group_by(individualID, specimenID) %>%
+  lines <- bam_files |>
+    group_by(individualID, specimenID) |>
     summarize(bam = paste0("syn://", id[file_type == "bam"]),
               bai = paste0("syn://", id[file_type == "bai"]),
-              .groups = "drop") %>%
+              .groups = "drop") |>
     dplyr::rename(patient = individualID, sample = specimenID)
 
   samplesheet_filename <- file.path(samplesheet_dir,
@@ -90,7 +94,7 @@ for (study in unique(metadata$study_name)) {
 
   ## Create provenance manifest for Step 03 ------------------------------------
 
-  provenance <- select(bam_files, id, versionNumber, name) %>%
+  provenance <- select(bam_files, id, versionNumber, name) |>
     mutate(across(id:name, unlist))
 
   provenance <- rbind(meta_provenance, provenance)

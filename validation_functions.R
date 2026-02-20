@@ -1,3 +1,40 @@
+print_variant_mismatches <- function(var_mismatches, genotype_name) {
+  wt_mismatches <- subset(var_mismatches, !is_carrier)
+  carrier_mismatches <- subset(var_mismatches, is_carrier)
+
+  if (nrow(wt_mismatches) > 0) {
+    print(paste("Detected", genotype_name, "variants in",
+                nrow(wt_mismatches), "WT samples:"))
+
+    print(select(wt_mismatches, study, specimenID, genotype, est_genotype))
+  } else {
+    print(paste("No WT samples have detected", genotype_name, "variants."))
+  }
+
+  print("")
+
+  if (nrow(carrier_mismatches) > 0) {
+    print(paste(nrow(carrier_mismatches), "carrier samples",
+                "had no detected", genotype_name, "variants:"))
+    print(select(carrier_mismatches, study, specimenID, genotype, est_genotype))
+  } else {
+    print(paste("No carrier samples are missing detected", genotype_name,
+                "variants."))
+  }
+}
+
+
+print_expression_mismatches <- function(mismatch_df, genotype_name, genes) {
+  if (nrow(mismatch_df) > 0) {
+    print(paste(nrow(mismatch_df), "samples have a", genotype_name,
+                "expression mismatch:"))
+    print(select(mismatch_df, -unique_specimenID))
+  } else {
+    print(paste("No samples have a", genotype_name, "expression mismatch."))
+  }
+}
+
+
 validate_3x <- function(metadata, geno_calls, counts, symbol_map,
                         genotype_pattern = "3xTg-AD_carrier") {
   valid_variants <- get_variant_mismatches(
@@ -24,17 +61,17 @@ validate_3x <- function(metadata, geno_calls, counts, symbol_map,
                              (grepl(genotype_pattern, genotype) & expr_3x) |
                                (!grepl(genotype_pattern, genotype) & !expr_3x))
   count_mismatches <- subset(counts_df,
-                             !(merged_file_specimenID %in% valid_expression$merged_file_specimenID)) |>
-    select(study_name, specimenID, merged_file_specimenID, genotype, expr_3x, APP, MAPT)
+                             !(unique_specimenID %in% valid_expression$unique_specimenID)) |>
+    select(study, specimenID, unique_specimenID, genotype, expr_3x, APP, MAPT)
 
   print_expression_mismatches(count_mismatches, "3xTg-AD")
 
-  counts_df$valid_3x_expression <- counts_df$merged_file_specimenID %in% valid_expression$merged_file_specimenID
+  counts_df$valid_3x_expression <- counts_df$unique_specimenID %in% valid_expression$unique_specimenID
 
   final <- merge(valid_variants, counts_df) |>
     mutate(valid = valid_3x_variant & valid_3x_expression)
 
-  return(list(valid = select(final, merged_file_specimenID, valid),
+  return(list(valid = select(final, unique_specimenID, valid),
               detail = select(final, -valid)))
 }
 
@@ -55,18 +92,18 @@ validate_5x <- function(metadata, geno_calls, counts, symbol_map,
   var_mismatches <- subset(valid_variants, !valid_5x_variant)
   print_variant_mismatches(var_mismatches, "5XFAD")
 
-  # Also look at gene expression, because a lack of detected variant doesn't mean
-  # the genotype isn't there.
+  # Also look at gene expression, because a lack of detected variant doesn't
+  # mean the genotype isn't there.
   # For 5XFAD, expression of APP and PSEN1 in carriers should be really high, so
   # we consider variant calling to be pretty reliable in that all 6 detected
   # variants should be detected in carrier mice, while non-carrier mice should
   # have none but may have a few low-quality detections due to the homology
-  # between the human and mouse genes. The following combinations of recorded and
-  # estimated carrier status are valid:
+  # between the human and mouse genes. The following combinations of recorded
+  # and estimated carrier status are valid:
   #   Recorded carrier genotype, estimated carrier genotype
   #   Recorded non-carrier genotype, estimated "ambiguous" or "non-carrier" genotype
-  # Anything else (carrier + ambiguous/non-carrier, and non-carrier + carrier) is
-  # not valid.
+  # Anything else (carrier + ambiguous/non-carrier, and non-carrier + carrier)
+  # is not valid.
   counts_df <- make_counts_df(metadata, counts, symbol_map,
                               c("APP", "PSEN1")) |>
     # Using > 1 CPM is sufficient for this genotype. This statement needs to be an
@@ -80,16 +117,17 @@ validate_5x <- function(metadata, geno_calls, counts, symbol_map,
                                (!grepl(genotype_pattern, genotype) & !expr_5x))
 
   count_mismatches <- subset(counts_df,
-                             !(merged_file_specimenID %in% valid_expression$merged_file_specimenID))
+                             !(unique_specimenID %in% valid_expression$unique_specimenID)) |>
+    select(study, specimenID, unique_specimenID, genotype, expr_5x, APP, PSEN1)
 
   print_expression_mismatches(count_mismatches, "5XFAD")
 
-  counts_df$valid_5x_expression <- counts_df$merged_file_specimenID %in% valid_expression$merged_file_specimenID
+  counts_df$valid_5x_expression <- counts_df$unique_specimenID %in% valid_expression$unique_specimenID
 
   final <- merge(valid_variants, counts_df) |>
     mutate(valid = valid_5x_variant & valid_5x_expression)
 
-  return(list(valid = select(final, merged_file_specimenID, valid),
+  return(list(valid = select(final, unique_specimenID, valid),
               detail = select(final, -valid)))
 }
 
@@ -108,7 +146,8 @@ validate_APOE4_KI <- function(metadata, counts, symbol_map,
                                (!grepl(genotype_pattern, genotype) & !expr_apoe))
 
   count_mismatches <- subset(counts_df,
-                             !(merged_file_specimenID %in% valid_expression$merged_file_specimenID))
+                             !(unique_specimenID %in% valid_expression$unique_specimenID)) |>
+    select(study, specimenID, unique_specimenID, genotype, expr_apoe, APOE)
 
   print_expression_mismatches(count_mismatches, "APOE4-KI")
 
@@ -117,10 +156,10 @@ validate_APOE4_KI <- function(metadata, counts, symbol_map,
   # outliers on a PCA
 
   final <- counts_df |>
-    mutate(valid_apoe4_expression = merged_file_specimenID %in% valid_expression$merged_file_specimenID,
+    mutate(valid_apoe4_expression = unique_specimenID %in% valid_expression$unique_specimenID,
            valid = valid_apoe4_expression)
 
-  return(list(valid = select(final, merged_file_specimenID, valid),
+  return(list(valid = select(final, unique_specimenID, valid),
               detail = select(final, -valid)))
 }
 
@@ -139,7 +178,7 @@ validate_Abca7 <- function(metadata, geno_calls,
 
   # There is no noticeable difference in Abca7 gene expression between genotypes
   # for each study so we do not validate based on expression.
-  return(list(valid = select(valid_variants, merged_file_specimenID, valid),
+  return(list(valid = select(valid_variants, unique_specimenID, valid),
               detail = valid_variants))
 }
 
@@ -163,7 +202,7 @@ validate_Abi3 <- function(metadata, geno_calls,
 
   # There is no noticeable difference in gene expression between genotypes so
   # we do not validate by expression.
-  return(list(valid = select(valid_variants, merged_file_specimenID, valid),
+  return(list(valid = select(valid_variants, unique_specimenID, valid),
               detail = valid_variants))
 }
 
@@ -185,14 +224,15 @@ validate_CLU_KI <- function(metadata, counts, symbol_map,
                                (!grepl(genotype_pattern, genotype) & !expr_clu))
 
   count_mismatches <- subset(counts_df,
-                             !(merged_file_specimenID %in% valid_expression$merged_file_specimenID))
+                             !(unique_specimenID %in% valid_expression$unique_specimenID)) |>
+    select(study, specimenID, unique_specimenID, genotype, expr_clu, CLU)
 
   print_expression_mismatches(count_mismatches, "CLU-KI")
 
   final <- counts_df |>
-    mutate(valid = merged_file_specimenID %in% valid_expression$merged_file_specimenID)
+    mutate(valid = unique_specimenID %in% valid_expression$unique_specimenID)
 
-  return(list(valid = select(final, merged_file_specimenID, valid),
+  return(list(valid = select(final, unique_specimenID, valid),
               detail = final))
 }
 
@@ -211,7 +251,7 @@ validate_hAbeta_KI <- function(metadata, geno_calls,
 
   # There is no noticeable difference in App expression between genotypes, so we
   # do not validate by expression.
-  return(list(valid = select(valid_variants, merged_file_specimenID, valid),
+  return(list(valid = select(valid_variants, unique_specimenID, valid),
               detail = valid_variants))
 }
 
@@ -229,14 +269,15 @@ validate_Trem2_KO <- function(metadata, counts, symbol_map) {
   valid_expression <- subset(df_trem2ko, (genotype == "Trem2-KO" & !expr_trem2) |
                                (genotype != "Trem2-KO" & expr_trem2))
   count_mismatches <- subset(counts_df,
-                             !(merged_file_specimenID %in% valid_expression$merged_file_specimenID))
+                             !(unique_specimenID %in% valid_expression$unique_specimenID)) |>
+    select(study, specimenID, unique_specimenID, genotype, expr_trem2, Trem2)
 
   print_expression_mismatches(count_mismatches, "Trem2-KO")
 
   final <- counts_df |>
-    mutate(valid = merged_file_specimenID %in% valid_expression$merged_file_specimenID)
+    mutate(valid = unique_specimenID %in% valid_expression$unique_specimenID)
 
-  return(list(valid = select(final, merged_file_specimenID, valid),
+  return(list(valid = select(final, unique_specimenID, valid),
               detail = final))
 }
 
@@ -271,6 +312,6 @@ validate_Trem2_R47H <- function(metadata, geno_calls,
 
   valid_variants <- mutate(valid_variants, valid = valid_trem2_r47h_variant)
 
-  return(list(valid = select(valid_variants, merged_file_specimenID, valid),
+  return(list(valid = select(valid_variants, unique_specimenID, valid),
               detail = select(valid_variants, -valid)))
 }
