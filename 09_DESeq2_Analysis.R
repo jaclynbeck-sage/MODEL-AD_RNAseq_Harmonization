@@ -5,33 +5,48 @@ library(ggplot2)
 library(stringr)
 library(vsn)
 
+source("util_functions.R")
+
 # TODO check diff expression against the genes found in benchmarking that changed
 # between reference genomes
 
 # Set up -----------------------------------------------------------------------
 
-# Synapse IDs used in this script -- merged metadata and the gene_counts
-# file with data from all studies
-syn_metadata_file_id <- "syn61850266"
-syn_gene_counts_id <- "syn62690577"
-syn_symbol_map_id <- "syn62063692"
+file_syn_ids <- config::get("file_syn_ids", config = "default")
+folder_syn_ids <- config::get("folder_syn_ids", config = "default")
+studies <- config::get("studies", config = "default")
 
 synLogin(silent = TRUE)
 
-github <- "https://github.com/jaclynbeck-sage/MODEL-AD_RNAseq_Harmonization/blob/main/07_DESeq2_Analysis.Rmd"
-tmp_dir <- file.path("data", "tmp")
+github <- paste0(config::get("github_repo_url", config = "default"),
+                 "/blob/main/09_DESeq2_Analysis.R")
+tmp_dir <- file.path("output", "tmp")
 
 
 # Load counts and metadata -----------------------------------------------------
 
-metadata_file <- synGet(syn_metadata_file_id, downloadLocation = tmp_dir,
-                        ifcollision = "overwrite.local")
-counts_file <- synGet(syn_gene_counts_id, downloadLocation = tmp_dir,
-                      ifcollision = "overwrite.local")
-symbol_map_file <- synGet(syn_symbol_map_id, downloadLocation = tmp_dir,
-                          ifcollision = "overwrite.local")
+meta_list <- get_all_metadata(folder_syn_ids$metadata)
+meta_list <- meta_list[studies] |>
+  lapply("[[", "data")
 
-metadata_all <- read.csv(metadata_file$path) |>
+symbol_map_file <- synGet(file_syn_ids$symbol_map, downloadLocation = tmp_dir,
+                          ifcollision = "overwrite.local")
+symbol_map <- read.csv(symbol_map_file$path) |>
+  arrange(ensembl_gene_id)
+
+counts_list <- get_all_counts_files(folder_syn_ids$raw_counts,
+                                    studies,
+                                    meta_list,
+                                    symbol_map,
+                                    count_type = "gene_counts") |>
+  lapply("[[", "counts")
+
+counts <- do.call(cbind, counts_list) |>
+  # RSEM can return non-integer numbers for counts, so it needs to be rounded
+  # to whole numbers for DESeq2
+  round(digits = 0)
+
+metadata_all <- do.call(rbind, meta_list) |>
   mutate(
     sex = str_to_title(sex), # Upper-case
     # Change to "Females" and "Males", plural
@@ -42,26 +57,16 @@ metadata_all <- read.csv(metadata_file$path) |>
     tissue = str_to_title(tissue)
   )
 
-counts <- read.table(counts_file$path, header = TRUE, sep = "\t",
-                     row.names = 1) |>
-  # Get rid of transcript_id column
-  select(-transcript_id.s.) |>
-  # RSEM can return non-integer numbers for counts, so it needs to be rounded
-  # to whole numbers for DESeq2
-  round(digits = 0)
-
 # Subset to validated samples only
 # TODO temporary until this is finalized and on Synapse
-valid_samples <- read.csv("data/Model_AD_valid_samples.csv")
+valid_samples <- read.csv("output/Model_AD_valid_samples.csv")
 valid_samples <- subset(valid_samples, validated == TRUE)
 metadata_all <- subset(metadata_all,
-                       merged_file_specimenID %in% valid_samples$merged_file_specimenID)
+                       unique_specimenID %in% valid_samples$unique_specimenID)
 
 # Not all samples in the metadata file appear in the counts matrix and vice versa
-metadata_all <- subset(metadata_all, merged_file_specimenID %in% colnames(counts))
-counts <- counts[, metadata_all$merged_file_specimenID]
-
-symbol_map <- read.csv(symbol_map_file$path)
+metadata_all <- subset(metadata_all, unique_specimenID %in% colnames(counts))
+counts <- counts[, metadata_all$unique_specimenID]
 
 
 # Utility functions ------------------------------------------------------------
@@ -78,7 +83,7 @@ plot_human_genes <- function(counts_mat, meta) {
     tidyr::pivot_longer(cols = where(is.numeric), names_to = "sample",
                         values_to = "count") |>
     # Get genotype information
-    merge(meta, by.x = "sample", by.y = "merged_file_specimenID") |>
+    merge(meta, by.x = "sample", by.y = "unique_specimenID") |>
     # Get gene symbols
     merge(symbol_map)
 
@@ -86,7 +91,7 @@ plot_human_genes <- function(counts_mat, meta) {
     geom_boxplot(position = "dodge", outliers = FALSE) +
     geom_jitter(height = 0) +
     theme_bw() +
-    facet_wrap(~gene_symbol, scales = "free") +
+    facet_wrap(~gene_symbol, scales = "free", nrow = 1) +
     scale_color_brewer(palette = "Set1")
 
   print(plt)
@@ -97,7 +102,7 @@ plot_human_genes <- function(counts_mat, meta) {
 # vector of strings.
 run_diff_expr <- function(counts, metadata, group_vals, model = "~ genotype") {
   meta_group <- subset(metadata, group %in% group_vals)
-  counts_group <- counts[, meta_group$merged_file_specimenID]
+  counts_group <- counts[, meta_group$unique_specimenID]
 
   # Ensure that any numerical variables that might be in the formula are scaled
   # relative to this group only
@@ -187,8 +192,10 @@ create_model <- function(metadata, group_val, model_vars) {
 get_all_de_results <- function(metadata, counts, parameters,
                                group_cols = c("sex", "age_group"),
                                model_vars = c("genotype")) {
-  meta_sub <- subset(metadata, study_name == parameters$study) |>
+  meta_sub <- subset(metadata, study == parameters$study) |>
     mutate(genotype = relevel(factor(genotype), ref = parameters$ref_genotype))
+
+  rownames(meta_sub) <- meta_sub$unique_specimenID
 
   if (length(group_cols) > 1) {
     meta_sub$group <- do.call(paste, meta_sub[, group_cols]) |> factor()
@@ -196,7 +203,7 @@ get_all_de_results <- function(metadata, counts, parameters,
     meta_sub$group <- meta_sub[, group_cols] |> factor()
   }
 
-  counts_sub <- counts[, meta_sub$merged_file_specimenID]
+  counts_sub <- counts[, meta_sub$unique_specimenID]
 
   # Study design
   print(table(meta_sub[, c("genotype", group_cols)]))
@@ -272,7 +279,7 @@ get_all_de_results <- function(metadata, counts, parameters,
 
 
 get_norm_counts <- function(meta, counts, model_name) {
-  counts <- counts[, meta$merged_file_specimenID]
+  counts <- counts[, meta$unique_specimenID]
   sfs <- estimateSizeFactorsForMatrix(counts)
 
   # Only keep genes that are expressed in at least 3 samples.
@@ -286,9 +293,9 @@ get_norm_counts <- function(meta, counts, model_name) {
     tidyr::pivot_longer(cols = -ensembl_gene_id,
                         names_to = "specimenID",
                         values_to = "expression") |>
-    merge(select(meta, individualID, merged_file_specimenID, tissue, sex,
+    merge(select(meta, individualID, unique_specimenID, tissue, sex,
                  age_group, genotype),
-          by.x = "specimenID", by.y = "merged_file_specimenID") |>
+          by.x = "specimenID", by.y = "unique_specimenID") |>
     mutate(age = age_group,
            model = model_name) |>
     # Put columns in a specific order
@@ -303,7 +310,7 @@ get_norm_counts <- function(meta, counts, model_name) {
 
 # This data has no separate batches.
 # Bin the ages into 4, 6, and 12 months
-meta_jax5x <- subset(metadata_all, study_name == "Jax.IU.Pitt_5XFAD") |>
+meta_jax5x <- subset(metadata_all, study == "Jax.IU.Pitt_5XFAD") |>
   mutate(age_group = case_when(ageDeath < 5 ~ "4 months",
                                ageDeath > 5 & ageDeath < 10 ~ "6 months",
                                ageDeath > 10 ~ "12 months")) |>
@@ -331,18 +338,18 @@ res_jax5x_mf <- get_all_de_results(
 )
 
 write.csv(rbind(res_jax5x, res_jax5x_mf),
-          str_glue("data/de_output/{params_jax5x$study}_differential_expression.csv"),
+          str_glue("output/de_output/{params_jax5x$study}_differential_expression.csv"),
           row.names = FALSE, quote = FALSE)
 
 norm_jax5x <- get_norm_counts(meta_jax5x, counts, params_jax5x$model_name)
 write.csv(norm_jax5x,
-          str_glue("data/de_output/{params_jax5x$study}_normalized_expression.csv"),
+          str_glue("output/de_output/{params_jax5x$study}_normalized_expression.csv"),
           row.names = FALSE, quote = FALSE)
 
 
 ## Jax.IU.Pitt_APOE4.Trem2.R47H ------------------------------------------------
 
-meta_load1 <- subset(metadata_all, study_name == "Jax.IU.Pitt_APOE4.Trem2.R47H") |>
+meta_load1 <- subset(metadata_all, study == "Jax.IU.Pitt_APOE4.Trem2.R47H") |>
   # drop the two samples with Trem2-R47H_heterozygous genotypes
   subset(!grepl("heterozygous", genotype)) |>
 
@@ -385,14 +392,37 @@ res_load1_mf <- get_all_de_results(
   model_vars = c("genotype", "sex", "ageDeath", "sequencingBatch")
 )
 
-write.csv(rbind(res_load1, res_load1_mf),
-          str_glue("data/de_output/{params_load1$study}_differential_expression.csv"),
+res_load1_all <- rbind(res_load1, res_load1_mf) |>
+  # Re-name model for certain genotypes to work with the explorer
+  mutate(model = case_match(case,
+                            "APOE4-KI_WT; Trem2-R47H_homozygous" ~ "Trem2R47H",
+                            "APOE4-KI_homozygous; Trem2-R47H_WT" ~ "APOE4",
+                            .default = model))
+
+write.csv(res_load1_all,
+          str_glue("output/de_output/{params_load1$study}_differential_expression.csv"),
           row.names = FALSE, quote = FALSE)
 
-norm_load1 <- get_norm_counts(meta_load1, counts, params_load1$model_name)
-write.csv(norm_load1,
-          str_glue("data/de_output/{params_load1$study}_normalized_expression.csv"),
-          row.names = FALSE, quote = FALSE)
+norm_load1 <- get_norm_counts(meta_load1, counts, params_load1$model_name) |>
+  # Re-name model for certain genotypes to work with the explorer
+  mutate(model = case_match(genotype,
+                            "APOE4-KI_WT; Trem2-R47H_homozygous" ~ "Trem2R47H",
+                            "APOE4-KI_homozygous; Trem2-R47H_WT" ~ "APOE4",
+                            .default = model))
+
+# Split into one file per "model" for the explorer
+for (model_name in unique(norm_load1$model)) {
+  norm_data <- subset(norm_load1, model == model_name | genotype == ref_geno) |>
+    mutate(model = model_name) # Fix WT model to match
+
+  output_name <- case_match(model_name,
+                            "LOAD1" ~ "APOE4.Trem2.R47H",
+                            "Trem2R47H" ~ "Trem2.R47H",
+                            "APOE4" ~ "APOE4")
+  write.csv(norm_data,
+            str_glue("output/de_output/Jax.IU.Pitt_{output_name}_normalized_expression.csv"),
+            row.names = FALSE, quote = FALSE)
+}
 
 
 ## UCI_3xTg-AD -----------------------------------------------------------------
@@ -418,13 +448,13 @@ res_3x_mf <- get_all_de_results(
 )
 
 write.csv(rbind(res_3x, res_3x_mf),
-          str_glue("data/de_output/{params_3x$study}_differential_expression.csv"),
+          str_glue("output/de_output/{params_3x$study}_differential_expression.csv"),
           row.names = FALSE, quote = FALSE)
 
-norm_3x <- get_norm_counts(subset(metadata_all, study_name == params_3x$study),
+norm_3x <- get_norm_counts(subset(metadata_all, study == params_3x$study),
                            counts, params_3x$model_name)
 write.csv(norm_3x,
-          str_glue("data/de_output/{params_3x$study}_normalized_expression.csv"),
+          str_glue("output/de_output/{params_3x$study}_normalized_expression.csv"),
           row.names = FALSE, quote = FALSE)
 
 
@@ -435,7 +465,7 @@ write.csv(norm_3x,
 
 # Drop 8 month time point
 meta_uci5x <- subset(metadata_all,
-                     study_name == "UCI_5XFAD" & age_group != "8 months")
+                     study == "UCI_5XFAD" & age_group != "8 months")
 
 params_5x <- list(
   study = "UCI_5XFAD",
@@ -457,12 +487,12 @@ res_5x_mf <- get_all_de_results(
 )
 
 write.csv(rbind(res_5x, res_5x_mf),
-          str_glue("data/de_output/{params_5x$study}_differential_expression.csv"),
+          str_glue("output/de_output/{params_5x$study}_differential_expression.csv"),
           row.names = FALSE, quote = FALSE)
 
 norm_5x <- get_norm_counts(meta_uci5x, counts, params_5x$model_name)
 write.csv(norm_5x,
-          str_glue("data/de_output/{params_5x$study}_normalized_expression.csv"),
+          str_glue("output/de_output/{params_5x$study}_normalized_expression.csv"),
           row.names = FALSE, quote = FALSE)
 
 
@@ -499,21 +529,39 @@ res_abca7_mf <- get_all_de_results(
   model_vars = c("genotype", "sex")
 )
 
-write.csv(rbind(res_abca7, res_abca7_mf),
-          str_glue("data/de_output/{params_abca7$study}_differential_expression.csv"),
+res_abca7_all <- rbind(res_abca7, res_abca7_mf) |>
+  # Re-name model for certain genotypes to work with the explorer
+  mutate(model = ifelse(case == "5XFAD_carrier; Abca7-V1599M_homozygous",
+                        "Abca7*V1599M.5xFAD", model))
+
+write.csv(res_abca7_all,
+          str_glue("output/de_output/{params_abca7$study}_differential_expression.csv"),
           row.names = FALSE, quote = FALSE)
 
-norm_abca7 <- get_norm_counts(subset(metadata_all, study_name == params_abca7$study),
-                              counts, params_abca7$model_name)
-write.csv(norm_abca7,
-          str_glue("data/de_output/{params_abca7$study}_normalized_expression.csv"),
-          row.names = FALSE, quote = FALSE)
+norm_abca7 <- get_norm_counts(subset(metadata_all, study == params_abca7$study),
+                              counts, params_abca7$model_name) |>
+  # Re-name model for certain genotypes to work with the explorer
+  mutate(model = case_match(genotype,
+                            "5XFAD_carrier; Abca7-V1599M_homozygous" ~ "Abca7*V1599M.5xFAD",
+                            "5XFAD_carrier" ~ "Abca7*V1599M.5xFAD",
+                            .default = model))
+
+# Split into one file per "model" for the explorer
+for (model_name in unique(norm_abca7$model)) {
+  norm_data <- subset(norm_abca7, model == model_name)
+
+  output_name <- str_replace(model_name, "\\*V1599M", "") |> str_to_upper()
+
+  write.csv(norm_data,
+            str_glue("output/de_output/UCI_{output_name}_normalized_expression.csv"),
+            row.names = FALSE, quote = FALSE)
+}
 
 
 ## UCI_hAbeta_KI ---------------------------------------------------------------
 
 # There are no batches in this data
-if ("UCI_hAbeta_KI" %in% metadata_all$study_name) {
+if ("UCI_hAbeta_KI" %in% metadata_all$study) {
   res_abki <- get_all_de_results(
     metadata_all, counts,
     study = "UCI_hAbeta_KI",
@@ -544,7 +592,7 @@ if ("UCI_hAbeta_KI" %in% metadata_all$study_name) {
 #
 # Or do we pool both C57BL6J and 5XFAD_noncarrier into one "WT" genotype?
 
-if ("UCI_Trem2_Cuprizone" %in% metadata_all$study_name) {
+if ("UCI_Trem2_Cuprizone" %in% metadata_all$study) {
   res_trem2cup <- get_all_de_results(
     metadata_all, counts, study = "UCI_Trem2_Cuprizone",
     ref_genotype = "5XFAD_noncarrier",
@@ -587,12 +635,30 @@ res_trem2nss_mf <- get_all_de_results(
   model_vars = c("genotype", "sex")
 )
 
-write.csv(rbind(res_trem2nss, res_trem2nss_mf),
-          str_glue("data/de_output/{params_trem2nss$study}_differential_expression.csv"),
+res_trem2nss_all <- rbind(res_trem2nss, res_trem2nss_mf) |>
+  # Re-name model for certain genotypes to work with the explorer
+  mutate(model = ifelse(case == "5XFAD_carrier; Trem2-R47H_NSS_homozygous",
+                        "Trem2-R47H_NSS.5xFAD", model))
+
+write.csv(res_trem2nss_all,
+          str_glue("output/de_output/{params_trem2nss$study}_differential_expression.csv"),
           row.names = FALSE, quote = FALSE)
 
-norm_trem2nss <- get_norm_counts(subset(metadata_all, study_name == params_trem2nss$study),
-                                 counts, params_trem2nss$model_name)
-write.csv(norm_trem2nss,
-          str_glue("data/de_output/{params_trem2nss$study}_normalized_expression.csv"),
-          row.names = FALSE, quote = FALSE)
+norm_trem2nss <- get_norm_counts(subset(metadata_all, study == params_trem2nss$study),
+                                 counts, params_trem2nss$model_name) |>
+  # Re-name model for certain genotypes to work with the explorer
+  mutate(model = case_match(genotype,
+                            "5XFAD_carrier; Trem2-R47H_NSS_homozygous" ~ "Trem2-R47H_NSS.5xFAD",
+                            "5XFAD_carrier" ~ "Trem2-R47H_NSS.5xFAD",
+                            .default = model))
+
+# Split into one file per "model" for the explorer
+for (model_name in unique(norm_trem2nss$model)) {
+  norm_data <- subset(norm_trem2nss, model == model_name)
+
+  output_name <- str_replace(model_name, "5xFAD", "5XFAD")
+
+  write.csv(norm_data,
+            str_glue("output/de_output/UCI_{output_name}_normalized_expression.csv"),
+            row.names = FALSE, quote = FALSE)
+}

@@ -33,7 +33,6 @@ default:
 
   # Individual files should have the version specified
   file_syn_ids:
-    merged_metadata: "syn61850266.13" # Staging/Metadata/Model_AD_merged_metadata.csv
     symbol_map: "syn62063692.2"       # Staging/Reference Genomes/universal_reference_symbol_map.csv
     intervals: "syn69046595.5"        # Staging/Reference Genomes/intervals_universal_genome.bed
     ref_fasta: "syn62035247.3"        # Staging/Reference Genomes/universal_MODEL_AD_reference.fa.gz

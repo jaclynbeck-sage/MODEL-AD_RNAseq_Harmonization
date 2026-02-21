@@ -6,6 +6,7 @@ library(purrr)
 library(ggplot2)
 
 source("validation_functions.R")
+source("util_functions.R")
 
 # Set up -----------------------------------------------------------------------
 
@@ -16,7 +17,7 @@ studies <- config::get("studies", config = "default")
 synLogin(silent = TRUE)
 
 github <- paste0(config::get("github_repo_url", config = "default"),
-                 "/blob/main/09_Sample_Validation.R")
+                 "/blob/main/08_Sample_Validation.R")
 tmp_dir <- file.path("output", "tmp")
 
 
@@ -97,71 +98,34 @@ get_variant_mismatches <- function(metadata, geno_info, genotype_pattern,
 
 # Load counts and metadata -----------------------------------------------------
 
-metadata_file <- synGet(file_syn_ids$merged_metadata,
-                        downloadLocation = tmp_dir,
-                        ifcollision = "overwrite.local")
+meta_list <- get_all_metadata(folder_syn_ids$metadata)
+meta_list <- meta_list[studies] |>
+  lapply("[[", "data")
+
+# Combine into one data frame
+metadata_all <- do.call(rbind, meta_list)
+
 symbol_map_file <- synGet(file_syn_ids$symbol_map,
                           downloadLocation = tmp_dir,
                           ifcollision = "overwrite.local")
 
-metadata_all <- read.csv(metadata_file$path) |>
-  subset(study %in% studies)
-
-stopifnot(all(studies %in% metadata_all$study))
-
 symbol_map <- read.csv(symbol_map_file$path) |>
   arrange(ensembl_gene_id)
 
-count_folders <- synGetChildren(folder_syn_ids$raw_counts,
-                                includeTypes = list("folder"))$asList()
-names(count_folders) <- sapply(count_folders, "[[", "name")
-
-stopifnot(all(studies %in% names(count_folders)))
-
 # Read in all counts files
 cat("Reading counts files...\n")
-counts_list <- lapply(studies, function(study_name) {
-  print(study_name)
-  folder <- count_folders[[study_name]]$id
-  all_files <- synGetChildren(folder, includeTypes = list("file"))$asList()
+counts_list <- get_all_counts_files(folder_syn_ids$raw_counts,
+                                    studies,
+                                    meta_list,
+                                    symbol_map,
+                                    count_type = "gene_counts") |>
+  lapply("[[", "counts")
 
-  counts_files <- do.call(rbind, all_files) |>
-    as.data.frame()
+counts <- do.call(cbind, counts_list)
 
-  if (nrow(counts_files) == 0) {
-    warning(str_glue("Counts file for {study_name} not found. This study will ",
-                     "not be validated."))
-    return(NULL)
-  }
-
-  counts_files <- subset(counts_files, grepl("gene_counts.tsv", name))
-
-  counts_file <- synGet(unlist(counts_files$id), downloadLocation = tmp_dir)
-
-  counts <- read.delim(counts_file$path, header = TRUE, row.names = 1) |>
-    # Get rid of transcript_id column
-    select(-transcript_id.s.)
-
-  # Convert counts to CPM so samples are comparable to each other
-  lib_sizes <- colSums(counts)
-  counts <- sweep(counts, 2, lib_sizes, "/") * 1e6
-
-  # Replace specimenID column names with the unique_specimenID in the metadata
-  id_map <- subset(metadata_all, study == study_name)
-  rownames(id_map) <- id_map$R_safe_specimenID
-  colnames(counts) <- id_map[colnames(counts), "unique_specimenID"]
-
-  # Make sure the matrix has all genes and in the same order. Data sets that
-  # were aligned to V1 of the genome will be missing human CLU, so this gene
-  # is filled in with 0's.
-  counts <- counts[symbol_map$ensembl_gene_id, ]
-  rownames(counts) <- symbol_map$ensembl_gene_id
-  counts[is.na(counts)] <- 0
-
-  return(counts)
-})
-
-counts <- list_cbind(counts_list)
+# Convert counts to CPM so samples are comparable to each other
+lib_sizes <- colSums(counts)
+counts <- sweep(counts, 2, lib_sizes, "/") * 1e6
 
 # Not all samples in the metadata file appear in the counts matrix and vice versa
 metadata_all <- subset(metadata_all, unique_specimenID %in% colnames(counts)) |>
@@ -605,8 +569,10 @@ valid_samples$validated <- rowSums(valid_samples[, c("valid_sex", "valid")]) == 
 print(paste(sum(!valid_samples$validated), "samples failed validation:"))
 print(subset(valid_samples, !validated))
 
-write.csv(valid_samples, file.path("output", "Model_AD_valid_samples_new.csv"),
-          row.names = FALSE)
+# TODO maybe split "valid" into "valid_genotype" and "valid_expression" for
+# readability
+write.csv(valid_samples, file.path("output", "Model_AD_valid_samples.csv"),
+          row.names = FALSE, quote = FALSE)
 
 meta_stats <- merge(metadata_all, valid_samples) |>
   # Fix a few age timepoints for Jax studies
@@ -634,6 +600,7 @@ stats <- meta_stats |>
             mismatched_samples = sum(!validated),
             .groups = "drop")
 
-write.csv(stats, "study_validated_samples_stats_new.csv", row.names = FALSE)
+write.csv(stats, "study_validated_samples_stats.csv",
+          row.names = FALSE, quote = FALSE)
 
 # TODO put on Synapse

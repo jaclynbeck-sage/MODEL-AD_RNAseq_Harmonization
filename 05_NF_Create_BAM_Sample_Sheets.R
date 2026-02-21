@@ -17,6 +17,8 @@ library(synapser)
 library(stringr)
 library(dplyr)
 
+source("util_functions.R")
+
 file_syn_ids <- config::get("file_syn_ids", config = "default")
 folder_syn_ids <- config::get("folder_syn_ids", config = "default")
 studies <- config::get("studies", config = "default")
@@ -30,15 +32,10 @@ dir.create(tmp_dir, showWarnings = FALSE)
 dir.create(samplesheet_dir, showWarnings = FALSE)
 dir.create(provenance_dir, showWarnings = FALSE)
 
-meta_file <- synGet(file_syn_ids$merged_metadata, downloadLocation = tmp_dir,
-                    ifcollision = "overwrite.local")
-metadata <- read.csv(meta_file$path) |>
-  subset(study %in% studies)
+meta_list <- get_all_metadata(folder_syn_ids$metadata)
 
-stopifnot(all(studies %in% metadata$study))
-
-meta_provenance <- c(meta_file$id, meta_file$versionNumber, meta_file$name)
-names(meta_provenance) <- c("id", "versionNumber", "name")
+# Subset to the studies we want
+meta_list <- meta_list[studies]
 
 bam_folders <- synGetChildren(folder_syn_ids$bams)$asList()
 names(bam_folders) <- sapply(bam_folders, "[[", "name")
@@ -46,9 +43,9 @@ names(bam_folders) <- sapply(bam_folders, "[[", "name")
 
 # Create one sample sheet per study --------------------------------------------
 
-for (study in unique(metadata$study)) {
+for (study in studies) {
   print(study)
-  meta_filt <- metadata[metadata$study == study, ] |>
+  meta <- meta_list[[study]]$data |>
     select(individualID, specimenID)
 
   ## Get a list of all bam files -----------------------------------------------
@@ -70,7 +67,7 @@ for (study in unique(metadata$study)) {
 
   # This will include BAM files with specimenIDs that don't exist in the
   # metadata, but the individualID will be NA
-  bam_files <- merge(bam_files, meta_filt, by = "specimenID", all.x = TRUE) |>
+  bam_files <- merge(bam_files, meta, by = "specimenID", all.x = TRUE) |>
     subset(file_type %in% c("bam", "bai"))
 
   # Check that we have an equal number of bams and bais
@@ -97,7 +94,7 @@ for (study in unique(metadata$study)) {
   provenance <- select(bam_files, id, versionNumber, name) |>
     mutate(across(id:name, unlist))
 
-  provenance <- rbind(meta_provenance, provenance)
+  provenance <- rbind(meta_list[[study]]$provenance, provenance)
 
   write.csv(provenance,
             file.path(provenance_dir,
@@ -122,8 +119,8 @@ for (study in unique(metadata$study)) {
 
   ## Print warnings for missing fastqs or extra fastqs -------------------------
 
-  if (!all(bam_files$specimenID %in% meta_filt$specimenID)) {
-    extra <- setdiff(bam_files$specimenID, meta_filt$specimenID)
+  if (!all(bam_files$specimenID %in% meta$specimenID)) {
+    extra <- setdiff(bam_files$specimenID, meta$specimenID)
     msg <- str_glue(
       "WARNING: {study} has BAM files for {length(extra)} specimen(s) that do ",
       "not exist in the metadata: {paste(sort(extra), collapse = ", ")}"
@@ -131,8 +128,8 @@ for (study in unique(metadata$study)) {
     message(msg)
   }
 
-  if (!all(meta_filt$specimenID %in% bam_files$specimenID)) {
-    missing <- setdiff(meta_filt$specimenID, bam_files$specimenID)
+  if (!all(meta$specimenID %in% bam_files$specimenID)) {
+    missing <- setdiff(meta$specimenID, bam_files$specimenID)
     msg <- str_glue(
       "WARNING: {study} is missing BAM files for {length(missing)} ",
       "specimen(s): {paste(sort(missing), collapse = ", ")}"

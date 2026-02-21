@@ -1,6 +1,5 @@
 # This script pulls in all metadata files necessary for RNA seq analysis from
-# all studies included in the analysis, cleans up a few fields, and combines the
-# metadata into one data frame containing all study information. Generally 3
+# all studies included in the analysis and cleans up a few fields. Generally 3
 # metadata files are needed: an individual metadata file, a biospecimen metadata
 # file, and an RNA seq assay metadata file, which are merged together so that
 # the final data frame only contains rows for specimens that have RNA seq data.
@@ -183,7 +182,7 @@ metadata <- lapply(1:nrow(metadata_list), function(N) {
   return(combined_df)
 })
 
-# Bind into one data frame
+# Bind into one data frame so we can make genotype changes all at once
 metadata_combined <- do.call(rbind, metadata)
 
 
@@ -227,7 +226,6 @@ for (G in 1:length(geno_map)) {
 # Genotypes should be semicolon-separated, not comma-separated
 metadata_combined$genotype <- str_replace(metadata_combined$genotype, ",", ";")
 
-
 # Standardize genotypeBackground values
 metadata_combined <- metadata_combined |>
   mutate(genotypeBackground = case_match(
@@ -240,21 +238,29 @@ metadata_combined <- metadata_combined |>
 # TODO the genotype names for LOAD2 Primary Screen may not be in the right format
 
 
-# Save to file and upload to Synapse -------------------------------------------
+# Save to files and upload to Synapse ------------------------------------------
 
-write.csv(metadata_combined, file.path("output", "Model_AD_merged_metadata.csv"),
-          row.names = FALSE, quote = FALSE)
+dir.create(file.path("output", "metadata"), showWarnings = FALSE)
 
-syn_file <- File(file.path("output", "Model_AD_merged_metadata.csv"),
-                 parent = folder_syn_ids$metadata)
+# Split the metadata up by study and write to individual files
+for (study_name in unique(metadata_combined$study)) {
+  study_data <- subset(metadata_combined, study == study_name)
+  study_file <- file.path("output", "metadata",
+                          paste0(study_name, "_harmonized_metadata.csv"))
 
-all_syn_ids <- c(metadata_list$Metadata_Assay,
-                 metadata_list$Metadata_Biospecimen,
-                 metadata_list$Metadata_Individual)
-github_link <- paste0(config::get("github_repo_url", config = "default"),
-                      "/blob/main/02_Harmonize_Metadata.R")
+  write.csv(study_data, study_file, row.names = FALSE, quote = FALSE)
 
-synStore(syn_file,
-         used = all_syn_ids,
-         executed = github_link,
-         forceVersion = FALSE)
+  syn_file <- File(study_file, parent = folder_syn_ids$metadata)
+
+  all_syn_ids <- subset(metadata_list, Study == study_name) |>
+    select(-Study) |>
+    as.character()
+
+  github_link <- paste0(config::get("github_repo_url", config = "default"),
+                        "/blob/main/02_Harmonize_Metadata.R")
+
+  synStore(syn_file,
+           used = all_syn_ids,
+           executed = github_link,
+           forceVersion = FALSE)
+}

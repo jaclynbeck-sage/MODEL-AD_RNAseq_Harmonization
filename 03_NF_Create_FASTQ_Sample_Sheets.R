@@ -34,6 +34,8 @@ library(synapser)
 library(stringr)
 library(dplyr)
 
+source("util_functions.R")
+
 file_syn_ids <- config::get("file_syn_ids", config = "default")
 folder_syn_ids <- config::get("folder_syn_ids", config = "default")
 syn_portal_query_id <- config::get("adkp_query_id", config = "default")
@@ -54,23 +56,19 @@ syn_ids <- read.csv(file.path("data", "Model_AD_SynID_list.csv"),
 
 stopifnot(all(studies %in% syn_ids$Study))
 
-meta_file <- synGet(file_syn_ids$merged_metadata,
-                    downloadLocation = tmp_dir,
-                    ifcollision = "overwrite.local")
-metadata <- read.csv(meta_file$path) |>
-  subset(study %in% studies)
+meta_list <- get_all_metadata(folder_syn_ids$metadata)
 
-stopifnot(all(studies %in% metadata$study))
+# Subset to the studies we want
+meta_list <- meta_list[studies]
 
 ref_fasta <- synGet(file_syn_ids$ref_fasta, downloadFile = FALSE)
 ref_gtf <- synGet(file_syn_ids$ref_gtf, downloadFile = FALSE)
 
 meta_provenance <- rbind(
-  c(meta_file$id, meta_file$versionNumber, meta_file$name),
   c(ref_fasta$id, ref_fasta$versionNumber, ref_fasta$name),
   c(ref_gtf$id, ref_gtf$versionNumber, ref_gtf$name)
 )
-colnames(meta_provenance) <- c("id", "currentVersion", "name")
+colnames(meta_provenance) <- c("id", "versionNumber", "name")
 
 
 # Create one sample sheet per study --------------------------------------------
@@ -78,7 +76,7 @@ colnames(meta_provenance) <- c("id", "currentVersion", "name")
 for (N in 1:nrow(syn_ids)) {
   row <- syn_ids[N,]
   print(row$Study)
-  meta_filt <- subset(metadata, study == row$Study)
+  meta <- meta_list[[row$Study]]$data
 
   ## Get a list of all fastqs available ----------------------------------------
 
@@ -104,7 +102,8 @@ for (N in 1:nrow(syn_ids)) {
   result <- synTableQuery(query, includeRowIdAndRowVersion = FALSE)
 
   all_fastqs <- read.csv(result$filepath) |>
-    select(id, name, specimenID, currentVersion)
+    select(id, name, specimenID, currentVersion) |>
+    dplyr::rename(versionNumber = currentVersion)
 
   # Get which fastqs are read 1 and read 2
   # UCI_ABCA7 uses "1.fq" and "2.fq" instead of "R1.fastq" and "R2.fastq", and
@@ -126,11 +125,6 @@ for (N in 1:nrow(syn_ids)) {
   if (row$Study == "Jax.IU.Pitt_5XFAD") {
     tmp_ids <- str_split(all_fastqs$name, "_", simplify = TRUE)[, c(2, 3)]
     all_fastqs$specimenID <- paste0(tmp_ids[, 1], "_", tmp_ids[, 2])
-
-  } else if (row$Study == "Jax.IU.Pitt_APOE4.Trem2.R47H") {
-    # Temporary: the query currently returns both the old fastq files and the
-    # new fastq files, so we filter out the old ones.
-    all_fastqs <- subset(all_fastqs, specimenID %in% meta_filt$specimenID)
 
   } else if (row$Study == "UCI_5XFAD") {
     # Specimen IDs in the annotation are formatted with a numerical ID followed
@@ -163,7 +157,7 @@ for (N in 1:nrow(syn_ids)) {
     # specimenIDs that don't exist in the metadata, so these are excluded as
     # well.
     all_fastqs <- subset(all_fastqs, specimenID != "12680lc" &
-                           specimenID %in% meta_filt$specimenID)
+                           specimenID %in% meta$specimenID)
 
   } else if (row$Study == "UCI_Trem2_Cuprizone") {
     # Some specimenIDs have an extra "w" in them
@@ -185,7 +179,7 @@ for (N in 1:nrow(syn_ids)) {
 
   # Check for fastq files for specimens not in the metadata, and check for
   # duplicate fastq files. Each specimenID should only have 2 files.
-  stopifnot(all_fastqs$specimenID %in% meta_filt$specimenID)
+  stopifnot(all_fastqs$specimenID %in% meta$specimenID)
   stopifnot(all(table(all_fastqs$specimenID) == 2))
 
 
@@ -206,8 +200,11 @@ for (N in 1:nrow(syn_ids)) {
 
   ## Create provenance manifest for Step 03 ------------------------------------
 
-  provenance <- select(all_fastqs, id, currentVersion, name)
-  provenance <- rbind(meta_provenance, provenance)
+  provenance <- select(all_fastqs, id, versionNumber, name)
+  provenance <- do.call(rbind,
+                        list(meta_list[[row$Study]]$provenance,
+                             meta_provenance,
+                             provenance))
 
   write.csv(provenance,
             file.path(provenance_dir, paste0(row$Study, "_provenance.csv")),
@@ -221,7 +218,7 @@ for (N in 1:nrow(syn_ids)) {
   samplesheet_provenance <- subset(provenance,
                                    !grepl("(fa|gtf)\\.gz", provenance$name))
   used_ids <- paste(samplesheet_provenance$id,
-                    samplesheet_provenance$currentVersion,
+                    samplesheet_provenance$versionNumber,
                     sep = ".")
 
   github_link <- paste0(config::get("github_repo_url", config = "default"),
@@ -235,8 +232,8 @@ for (N in 1:nrow(syn_ids)) {
 
   ## Print warnings for missing fastqs or extra fastqs -------------------------
 
-  if (!all(all_fastqs$specimenID %in% meta_filt$specimenID)) {
-    extra <- setdiff(all_fastqs$specimenID, meta_filt$specimenID)
+  if (!all(all_fastqs$specimenID %in% meta$specimenID)) {
+    extra <- setdiff(all_fastqs$specimenID, meta$specimenID)
     msg <- str_glue(
       "WARNING: {row$Study} has {length(extra)} fastq files for specimen(s) ",
       "that do not exist in the metadata: {paste(sort(extra), collapse = ", ")}"
@@ -244,8 +241,8 @@ for (N in 1:nrow(syn_ids)) {
     message(msg)
   }
 
-  if (!all(meta_filt$specimenID %in% all_fastqs$specimenID)) {
-    missing <- setdiff(meta_filt$specimenID, all_fastqs$specimenID)
+  if (!all(meta$specimenID %in% all_fastqs$specimenID)) {
+    missing <- setdiff(meta$specimenID, all_fastqs$specimenID)
     msg <- str_glue(
       "WARNING: {row$Study} is missing fastq files for {length(missing)} ",
       "specimen(s): {paste(sort(missing), collapse = ", ")}"

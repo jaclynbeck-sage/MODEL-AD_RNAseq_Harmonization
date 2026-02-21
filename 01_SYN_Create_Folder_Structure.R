@@ -43,7 +43,4 @@ for (study_name in study_list$Study) {
 
   # Folder for genotype validation
   geno <- create_folder(study_name, parent_id = folder_syn_ids$genotype_validation)
-
-  # TODO folders for normalized counts have not been determined yet
-  # TODO folders for differential expression have not been determined yet
 }
