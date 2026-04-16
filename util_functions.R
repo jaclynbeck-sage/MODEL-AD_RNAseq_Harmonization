@@ -11,9 +11,12 @@ get_all_metadata <- function(folder_synid) {
     return(list(
       study = unique(data$study),
       data = data,
-      provenance = data.frame(id = file_info$id,
-                              versionNumber = file_info$versionNumber,
-                              name = file_info$name)
+      provenance = data.frame(
+        id = file_info$id,
+        versionNumber = file_info$versionNumber,
+        name = file_info$name,
+        study = unique(data$study)
+      )
     ))
   })
 
@@ -78,13 +81,41 @@ get_all_counts_files <- function(folder_synid, studies, meta_list, symbol_map,
     rownames(counts) <- symbol_map$ensembl_gene_id
     counts[is.na(counts)] <- 0
 
-    return(list(name = study_name,
-                provenance = paste0(counts_file$id, ".", counts_file$versionNumber),
-                counts = counts))
+    return(list(
+      name = study_name,
+      counts = counts,
+      provenance = data.frame(
+        id = counts_file$id,
+        versionNumber = counts_file$versionNumber,
+        name = counts_file$name,
+        study = study_name
+      )
+    ))
   })
 
   # We can't add names() to the list because otherwise they get concatenated
   # to the column names when we cbind the list
   counts_list <- counts_list[lengths(counts_list) > 0]
   return(counts_list)
+}
+
+
+synapse_upload_de <- function(study_name, provenance_df, folder_syn_ids,
+                              de_filenames, norm_filenames) {
+  prov <- provenance_df[study_name, ]
+
+  # There might be more than one DE or normalized file associated with the study
+  for (filename in de_filenames) {
+    syn_file <- File(filename, parent = folder_syn_ids$diff_expr)
+    syn_file <- synStore(syn_file, forceVersion = FALSE,
+                         set_annotations = FALSE,
+                         used = prov$used, executed = prov$executed)
+  }
+
+  for (filename in norm_filenames) {
+    syn_file <- File(filename, parent = folder_syn_ids$norm_counts)
+    syn_file <- synStore(syn_file, forceVersion = FALSE,
+                         set_annotations = FALSE,
+                         used = prov$used, executed = prov$executed)
+  }
 }

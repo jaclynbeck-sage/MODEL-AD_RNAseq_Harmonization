@@ -28,8 +28,9 @@ default:
     nf_configs: "syn62147114"           # Staging/Nextflow Pipeline Input/Configuration
     reference_genomes: "syn61779396"    # Staging/Reference Genomes
     bams: "syn63856101"           # Staging/Gene Expression (RNA Seq)/BAM Files
-    norm_counts: "syn51132852"    # Staging/Gene Expression (RNA Seq)/Normalized Counts
     raw_counts: "syn51132850"     # Staging/Gene Expression (RNA Seq)/Raw Gene Counts
+    diff_expr: "syn51132858"      # Staging/Analysis/Differential Expression Analysis
+    norm_counts: "syn69058670"    # Model-AD explorer source data project, norm counts folder
 
   # Individual files should have the version specified
   file_syn_ids:

@@ -26,6 +26,8 @@ tmp_dir <- file.path("output", "tmp")
 # Load counts and metadata -----------------------------------------------------
 
 meta_list <- get_all_metadata(folder_syn_ids$metadata)
+meta_provenance <- do.call(rbind, lapply(meta_list, "[[", "provenance"))
+
 meta_list <- meta_list[studies] |>
   lapply("[[", "data")
 
@@ -38,13 +40,14 @@ counts_list <- get_all_counts_files(folder_syn_ids$raw_counts,
                                     studies,
                                     meta_list,
                                     symbol_map,
-                                    count_type = "gene_counts") |>
-  lapply("[[", "counts")
+                                    count_type = "gene_counts")
 
-counts <- do.call(cbind, counts_list) |>
+counts <- do.call(cbind, lapply(counts_list, "[[", "counts")) |>
   # RSEM can return non-integer numbers for counts, so it needs to be rounded
   # to whole numbers for DESeq2
   round(digits = 0)
+
+counts_provenance <- do.call(rbind, lapply(counts_list, "[[", "provenance"))
 
 metadata_all <- do.call(rbind, meta_list) |>
   mutate(
@@ -64,9 +67,19 @@ valid_samples <- subset(valid_samples, validated == TRUE)
 metadata_all <- subset(metadata_all,
                        unique_specimenID %in% valid_samples$unique_specimenID)
 
+# TODO provenance for valid samples file when it's on Synapse
+
 # Not all samples in the metadata file appear in the counts matrix and vice versa
 metadata_all <- subset(metadata_all, unique_specimenID %in% colnames(counts))
 counts <- counts[, metadata_all$unique_specimenID]
+
+provenance_df <- rbind(meta_provenance, counts_provenance) |>
+  subset(study %in% studies) |>
+  mutate(synID = paste0(id, ".", versionNumber)) |>
+  group_by(study) |>
+  summarize(used = list(c(synID, file_syn_ids$symbol_map)),
+            executed = github) |>
+  tibble::column_to_rownames("study")
 
 
 # Utility functions ------------------------------------------------------------
@@ -337,14 +350,18 @@ res_jax5x_mf <- get_all_de_results(
   model_vars = c("genotype", "sex")
 )
 
-write.csv(rbind(res_jax5x, res_jax5x_mf),
-          str_glue("output/de_output/{params_jax5x$study}_differential_expression.csv"),
+jax5x_de_file <- str_glue("output/de_output/{params_jax5x$study}_differential_expression.csv")
+write.csv(rbind(res_jax5x, res_jax5x_mf), jax5x_de_file,
           row.names = FALSE, quote = FALSE)
 
 norm_jax5x <- get_norm_counts(meta_jax5x, counts, params_jax5x$model_name)
-write.csv(norm_jax5x,
-          str_glue("output/de_output/{params_jax5x$study}_normalized_expression.csv"),
+jax5x_norm_file <- str_glue("output/de_output/{params_jax5x$study}_normalized_expression.csv")
+write.csv(norm_jax5x, jax5x_norm_file,
           row.names = FALSE, quote = FALSE)
+
+# Upload to Synapse
+synapse_upload_de(params_jax5x$study, provenance_df, folder_syn_ids,
+                  jax5x_de_file, jax5x_norm_file)
 
 
 ## Jax.IU.Pitt_APOE4.Trem2.R47H ------------------------------------------------
@@ -399,8 +416,8 @@ res_load1_all <- rbind(res_load1, res_load1_mf) |>
                             "APOE4-KI_homozygous; Trem2-R47H_WT" ~ "APOE4",
                             .default = model))
 
-write.csv(res_load1_all,
-          str_glue("output/de_output/{params_load1$study}_differential_expression.csv"),
+load1_de_file <- str_glue("output/de_output/{params_load1$study}_differential_expression.csv")
+write.csv(res_load1_all, load1_de_file,
           row.names = FALSE, quote = FALSE)
 
 norm_load1 <- get_norm_counts(meta_load1, counts, params_load1$model_name) |>
@@ -411,7 +428,7 @@ norm_load1 <- get_norm_counts(meta_load1, counts, params_load1$model_name) |>
                             .default = model))
 
 # Split into one file per "model" for the explorer
-for (model_name in unique(norm_load1$model)) {
+load1_norm_files <- lapply(unique(norm_load1$model), function(model_name) {
   norm_data <- subset(norm_load1, model == model_name | genotype == ref_geno) |>
     mutate(model = model_name) # Fix WT model to match
 
@@ -419,10 +436,20 @@ for (model_name in unique(norm_load1$model)) {
                             "LOAD1" ~ "APOE4.Trem2.R47H",
                             "Trem2R47H" ~ "Trem2.R47H",
                             "APOE4" ~ "APOE4")
-  write.csv(norm_data,
-            str_glue("output/de_output/Jax.IU.Pitt_{output_name}_normalized_expression.csv"),
+
+  norm_filename <- str_glue("output/de_output/Jax.IU.Pitt_{output_name}_normalized_expression.csv")
+  write.csv(norm_data, norm_filename,
             row.names = FALSE, quote = FALSE)
-}
+
+  return(norm_filename)
+})
+
+# Upload to Synapse
+tmp_folder_ids <- folder_syn_ids
+tmp_folder_ids$norm_counts <- "syn72388361"
+synapse_upload_de(params_load1$study, provenance_df, tmp_folder_ids,
+                  load1_de_file, load1_norm_files)
+
 
 
 ## UCI_3xTg-AD -----------------------------------------------------------------
@@ -447,15 +474,20 @@ res_3x_mf <- get_all_de_results(
   model_vars = c("genotype", "sex")
 )
 
-write.csv(rbind(res_3x, res_3x_mf),
-          str_glue("output/de_output/{params_3x$study}_differential_expression.csv"),
+de_3x_file <- str_glue("output/de_output/{params_3x$study}_differential_expression.csv")
+write.csv(rbind(res_3x, res_3x_mf), de_3x_file,
           row.names = FALSE, quote = FALSE)
 
 norm_3x <- get_norm_counts(subset(metadata_all, study == params_3x$study),
                            counts, params_3x$model_name)
-write.csv(norm_3x,
-          str_glue("output/de_output/{params_3x$study}_normalized_expression.csv"),
+
+norm_3x_file <- str_glue("output/de_output/{params_3x$study}_normalized_expression.csv")
+write.csv(norm_3x, norm_3x_file,
           row.names = FALSE, quote = FALSE)
+
+# Upload to Synapse
+synapse_upload_de(params_3x$study, provenance_df, folder_syn_ids,
+                  de_3x_file, norm_3x_file)
 
 
 ## UCI_5XFAD -------------------------------------------------------------------
@@ -486,14 +518,18 @@ res_5x_mf <- get_all_de_results(
   model_vars = c("genotype", "sex")
 )
 
-write.csv(rbind(res_5x, res_5x_mf),
-          str_glue("output/de_output/{params_5x$study}_differential_expression.csv"),
+de_5x_file <- str_glue("output/de_output/{params_5x$study}_differential_expression.csv")
+write.csv(rbind(res_5x, res_5x_mf), de_5x_file,
           row.names = FALSE, quote = FALSE)
 
 norm_5x <- get_norm_counts(meta_uci5x, counts, params_5x$model_name)
-write.csv(norm_5x,
-          str_glue("output/de_output/{params_5x$study}_normalized_expression.csv"),
+norm_5x_file <- str_glue("output/de_output/{params_5x$study}_normalized_expression.csv")
+write.csv(norm_5x, norm_5x_file,
           row.names = FALSE, quote = FALSE)
+
+# Upload to Synapse
+synapse_upload_de(params_5x$study, provenance_df, folder_syn_ids,
+                  de_5x_file, norm_5x_file)
 
 
 ## UCI_ABCA7 -------------------------------------------------------------------
@@ -534,8 +570,8 @@ res_abca7_all <- rbind(res_abca7, res_abca7_mf) |>
   mutate(model = ifelse(case == "5XFAD_carrier; Abca7-V1599M_homozygous",
                         "Abca7*V1599M.5xFAD", model))
 
-write.csv(res_abca7_all,
-          str_glue("output/de_output/{params_abca7$study}_differential_expression.csv"),
+de_abca7_file <- str_glue("output/de_output/{params_abca7$study}_differential_expression.csv")
+write.csv(res_abca7_all, de_abca7_file,
           row.names = FALSE, quote = FALSE)
 
 norm_abca7 <- get_norm_counts(subset(metadata_all, study == params_abca7$study),
@@ -547,60 +583,20 @@ norm_abca7 <- get_norm_counts(subset(metadata_all, study == params_abca7$study),
                             .default = model))
 
 # Split into one file per "model" for the explorer
-for (model_name in unique(norm_abca7$model)) {
+norm_abca7_files <- lapply(unique(norm_abca7$model), function(model_name) {
   norm_data <- subset(norm_abca7, model == model_name)
 
   output_name <- str_replace(model_name, "\\*V1599M", "") |> str_to_upper()
 
-  write.csv(norm_data,
-            str_glue("output/de_output/UCI_{output_name}_normalized_expression.csv"),
+  norm_file <- str_glue("output/de_output/UCI_{output_name}_normalized_expression.csv")
+  write.csv(norm_data, norm_file,
             row.names = FALSE, quote = FALSE)
-}
+  return(norm_file)
+})
 
-
-## UCI_hAbeta_KI ---------------------------------------------------------------
-
-# There are no batches in this data
-if ("UCI_hAbeta_KI" %in% metadata_all$study) {
-  res_abki <- get_all_de_results(
-    metadata_all, counts,
-    study = "UCI_hAbeta_KI",
-    ref_genotype = "hAbeta-KI_LoxP_WT",
-    contrasts = list(c("genotype", "hAbeta-KI_LoxP_homozygous", "hAbeta-KI_LoxP_WT")),
-    group_cols = c("sex", "ageDeath"),
-    model_vars = c("genotype")
-  )
-  # TODO write to file
-}
-
-## UCI_Trem2_Cuprizone ---------------------------------------------------------------
-
-# This data only has 3-month males. No females or other ages.
-# There are batches with this study (both libraryBatch and rnaBatch), though
-# using rnaBatch is sufficient as all rnaBatches only contain one libraryBatch.
-# All 5XFAD_noncarrier and Trem2-R47H_NSS_homozygous were run in the same batch,
-# and all cuprizone Trem2-R47H_CSS_homozygous mice are also in that batch. A
-# second batch contains some C57BL6J, some Trem2-KO, and some control
-# Trem2-R47H_CSS_homozygous, while a third batch contains some C57BL6J, all
-# control Trem2-KO, and some control Trem2-R47H_CSS_homozygous.
-#
-# It looks like the comparisons need to be:
-#   Trem2-R47H_NSS_homozygous vs 5XFAD_noncarrier
-#   cuprizone Trem2-R47H_CSS_homozygous vs cuprizone 5XFAD_noncarrier
-#   Trem2-KO vs C57BL6J
-#   control Trem2-R47H_CSS_homozygous vs control C57BL6J
-#
-# Or do we pool both C57BL6J and 5XFAD_noncarrier into one "WT" genotype?
-
-if ("UCI_Trem2_Cuprizone" %in% metadata_all$study) {
-  res_trem2cup <- get_all_de_results(
-    metadata_all, counts, study = "UCI_Trem2_Cuprizone",
-    ref_genotype = "5XFAD_noncarrier",
-    contrasts = list("??"),
-    group_cols = c("treatmentType"),
-    model_vars = c("rnaBatch", "genotype")
-  )
-}
+# Upload to Synapse
+synapse_upload_de(params_abca7$study, provenance_df, tmp_folder_ids,
+                  de_abca7_file, norm_abca7_files)
 
 
 ## UCI_Trem2-R47H_NSS ---------------------------------------------------------------
@@ -640,8 +636,8 @@ res_trem2nss_all <- rbind(res_trem2nss, res_trem2nss_mf) |>
   mutate(model = ifelse(case == "5XFAD_carrier; Trem2-R47H_NSS_homozygous",
                         "Trem2-R47H_NSS.5xFAD", model))
 
-write.csv(res_trem2nss_all,
-          str_glue("output/de_output/{params_trem2nss$study}_differential_expression.csv"),
+de_trem2nss_file <- str_glue("output/de_output/{params_trem2nss$study}_differential_expression.csv")
+write.csv(res_trem2nss_all, de_trem2nss_file,
           row.names = FALSE, quote = FALSE)
 
 norm_trem2nss <- get_norm_counts(subset(metadata_all, study == params_trem2nss$study),
@@ -653,12 +649,18 @@ norm_trem2nss <- get_norm_counts(subset(metadata_all, study == params_trem2nss$s
                             .default = model))
 
 # Split into one file per "model" for the explorer
-for (model_name in unique(norm_trem2nss$model)) {
+norm_trem2nss_files <- lapply(unique(norm_trem2nss$model), function(model_name) {
   norm_data <- subset(norm_trem2nss, model == model_name)
 
   output_name <- str_replace(model_name, "5xFAD", "5XFAD")
 
-  write.csv(norm_data,
-            str_glue("output/de_output/UCI_{output_name}_normalized_expression.csv"),
+  norm_file <- str_glue("output/de_output/UCI_{output_name}_normalized_expression.csv")
+  write.csv(norm_data, norm_file,
             row.names = FALSE, quote = FALSE)
-}
+
+  return(norm_file)
+})
+
+# Upload to Synapse
+synapse_upload_de(params_trem2nss$study, provenance_df, tmp_folder_ids,
+                  de_trem2nss_file, norm_trem2nss_files)
