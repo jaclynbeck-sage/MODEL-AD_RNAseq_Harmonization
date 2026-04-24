@@ -2,23 +2,23 @@
 
 ## Table of Contents
 
-1.  [Introduction]
+1.  [Introduction](#introduction)
 
-2.  [Examples]
+2.  [Examples](#examples)
 
     1.  [Human gene mutation (London mutation of APP)](#human-gene-mutation-london-mutation-of-app)
 
-    2.  [Mouse gene mutations]
+    2.  [Mouse gene mutations](#mouse-gene-mutations)
 
-3.  [Current mutations in the file]
+3.  [Current mutations in the file](#current-mutations-in-the-file)
 
-    1.  [Human]
+    1.  [Human](#human-mutations-in-file)
 
-    2.  [Mouse]
+    2.  [Mouse](#human-mutations-in-file)
 
-4.  [Excluded mutations]
+4.  [Excluded mutations](#excluded-mutations)
 
-## Introduction
+## Introduction {#introduction}
 
 This pipeline does genotype verification where possible, using the `nf-core/sarek` workflow. The workflow requires a .bed file of intervals, where each interval is the genomic coordinates of the mutation to look for. Finding the coordinates for a mutation can be complicated and time consuming, so this document has a few examples done a few different ways to explain my process. **I show both a more complicated/involved way and an easier way for each example,** because not all mutations have the same information available.
 
@@ -74,7 +74,7 @@ We use a custom genome which was created by this repository: [Sage-Bionetworks/c
 
 ------------------------------------------------------------------------
 
-# Examples
+# Examples {#examples}
 
 ## Human gene mutation (London mutation of APP) {#human-gene-mutation-london-mutation-of-app}
 
@@ -169,7 +169,7 @@ This prints out `GTC`, which matches what we expect. You can also print out a fe
 
 ------------------------------------------------------------------------
 
-## Mouse gene mutations
+## Mouse gene mutations {#mouse-gene-mutations}
 
 Mouse genes are easier to add than human genes in some ways, mostly because we don’t have to convert between coordinate systems. Let’s use the **Abca7-V1613M** mutation as an example. No stock number was provided in the metadata of the UCI_ABCA7 study, but the [wiki page for the study](https://www.synapse.org/Synapse:syn27207345) has it. We end up at <https://www.jax.org/strain/035316> .
 
@@ -218,9 +218,9 @@ This should print out `AGTGG`, which covers our silent mutations and the target 
 
 ------------------------------------------------------------------------
 
-# Current mutations in the file
+# Current mutations in the file {#current-mutations-in-the-file}
 
-## Human
+## Human {#human-mutations-in-file}
 
 ------------------------------------------------------------------------
 
@@ -284,7 +284,7 @@ A familial AD mutation in human PSEN1. Changes AA 286 of the PSEN-201 transcript
 
 ------------------------------------------------------------------------
 
-## Mouse
+## Mouse {#mouse-mutations-in-file}
 
 ------------------------------------------------------------------------
 
@@ -454,7 +454,7 @@ Identical to the Trem2-R47H mutation except that it changes two bases of AA 47 (
 
 ------------------------------------------------------------------------
 
-## Excluded mutations
+## Excluded mutations {#excluded-mutations}
 
 ------------------------------------------------------------------------
 
