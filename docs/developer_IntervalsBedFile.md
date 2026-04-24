@@ -12,9 +12,9 @@
 
 3.  [Current mutations in the file](#current-mutations-in-the-file)
 
-    1.  [Human](#human-transgenes)
+    1.  [Human transgenes](#human-transgenes)
 
-    2.  [Mouse](#mouse-mutations)
+    2.  [Mouse mutations](#mouse-mutations)
 
 4.  [Excluded mutations](#excluded-mutations)
 
