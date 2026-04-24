@@ -10,10 +10,10 @@ General documentation about the project can be found on the [project's Synapse p
 
 3.  The genotype of each sample is validated, where possible, with the `nf-core/sarek` pipeline (mpileup), using detection or non-detection of variants of altered genes. When a gene modification cannot be detected with RNAseq data, this step is ignored for mouse genes, and positive expression of human genes is used instead when the model contains human transgenes.
 
-    1.  Detailed information on the development of the intervals.bed file used to define variant coordinates can be found here:
+    1.  Detailed information on the development of the intervals.bed file used to define variant coordinates can be found here: [IntervalsBedFile](https://github.com/jaclynbeck-sage/MODEL-AD_RNAseq_Harmonization/blob/main/docs/developer_IntervalsBedFile.md)
 
 4.  The sex of each mouse is validated using expression of X- and Y-chromosome genes *Xist*, *Eif2s3y*, and *Ddx3y*.
 
 5.  Differential expression is performed on the counts files, using only samples that passed QC.
 
-Detailed documentation on running the pipeline end-to-end can be found here:
+Detailed documentation on running the pipeline end-to-end can be found here: [RunningThePipeline](https://github.com/jaclynbeck-sage/MODEL-AD_RNAseq_Harmonization/blob/main/docs/developer_RunningThePipeline.md)

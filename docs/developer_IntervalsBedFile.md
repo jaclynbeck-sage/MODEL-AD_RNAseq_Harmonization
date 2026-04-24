@@ -1,5 +1,25 @@
 # Editing the intervals.bed file
 
+## Table of Contents
+
+1.  [Introduction]
+
+2.  [Examples]
+
+    1.  [Human gene mutation (London mutation of APP)](#human-gene-mutation-london-mutation-of-app)
+
+    2.  [Mouse gene mutations]
+
+3.  [Current mutations in the file]
+
+    1.  [Human]
+
+    2.  [Mouse]
+
+4.  [Excluded mutations]
+
+## Introduction
+
 This pipeline does genotype verification where possible, using the `nf-core/sarek` workflow. The workflow requires a .bed file of intervals, where each interval is the genomic coordinates of the mutation to look for. Finding the coordinates for a mutation can be complicated and time consuming, so this document has a few examples done a few different ways to explain my process. **I show both a more complicated/involved way and an easier way for each example,** because not all mutations have the same information available.
 
 We use a custom genome which was created by this repository: [Sage-Bionetworks/customReferenceMODEL-AD](https://github.com/Sage-Bionetworks/customReferenceMODEL-AD). All coordinates must be relative to the custom genome. For mouse genes, this is just the real genomic coordinates from the Ensembl v112 mouse genome. For human genes, there is some math involved:
@@ -18,7 +38,7 @@ We use a custom genome which was created by this repository: [Sage-Bionetworks/c
 
     -   CLU =\> 24
 
--   To get genomic coordinates for human genes, subtract the real coordinates of the start of the gene on the [human genome]{.underline} from the coordinates of the mutation, and add 1.
+-   To get genomic coordinates for human genes, subtract the real coordinates of the start of the gene on the **human genome** from the coordinates of the mutation, and add 1.
 
     -   For example, APOE starts at coordinate 44905791 of chromosome 19 on the human genome. A mutation at coordinate 44905800 would be at 44905800 - 44905791 + 1 = 10 on chromosome 20 in our custom genome.
 
@@ -48,7 +68,7 @@ We use a custom genome which was created by this repository: [Sage-Bionetworks/c
 >
 > The end coordinate in the intervals file is *not included* in the interval, so it must always be at least 1 base beyond the desired coordinates.
 >
-> Some part of the Sarek pipeline does not work if the start and end coordinates are only 1 base apart, so all 1-base mutations have an interval that is [2 bases wide]{.underline}. I also add an extra base at the end of the other intervals just to be safe. This does not affect the outcome of the genotyping.
+> Some part of the Sarek pipeline does not work if the start and end coordinates are only 1 base apart, so all 1-base mutations have an interval that is **2 bases wide**. I also add an extra base at the end of the other intervals just to be safe. This does not affect the outcome of the genotyping.
 >
 > -   In the APOE example above, the end coordinate would be 9+2 = 11.
 
@@ -56,7 +76,7 @@ We use a custom genome which was created by this repository: [Sage-Bionetworks/c
 
 # Examples
 
-## Human gene mutation (London mutation of APP)
+## Human gene mutation (London mutation of APP) {#human-gene-mutation-london-mutation-of-app}
 
 The “London” mutation in APP is one of the mutations in 5xFAD mice. The stock number for these mice (008730) is listed in the 5xFAD individual metadata (both UCI and Jax’s metadata), so we go to [jax.org](http://jax.org), search for that number, and end up at <https://www.jax.org/strain/008730>.
 
@@ -88,17 +108,17 @@ Possible places to find coordinates for this mutation:
 
 In this case we will use a combination of the [UniProt page](https://www.uniprot.org/uniprotkb/P05067/entry#P05067-1) and the [CCDS page](https://www.ncbi.nlm.nih.gov/CCDS/CcdsBrowse.cgi?REQUEST=CCDS&DATA=CCDS13576) for APP-201. On the UniProt page, there is a numbered amino acid sequence. If you look at amino acid #717, it is a V, so we are looking at the right variant. Copy the set of amino acids that are around 717 (`VIATVIVITL`) and search for that sequence on the CCDS page. (Alternatively, you could count to 717 along the amino acid sequence on the CCDS page). If you click on the V in the interactive amino acid sequence, it also highlights the codon in the sequence above it. So this particular V is codon “GTC” (GUC in RNA).
 
-The sequence on this page alternates between black and blue text to indicate exons. Our V is in the second-to-last exon. The table above lists the real genomic coordinates of each exon, however those coordinates are relative to the forward strand but the sequence is on the reverse strand. This means that the second-to-last exon in the sequence is actually the second exon in the table above, **and** the start of the exon is at the end of the sequence. Counting backward from the end, the V is the 21st amino acid. The G in the codon is the only base that changes, so the location of the G in the sequence is 20\*3 + 2 = 62. Then, the real coordinate of this G is 25891722 + 62 = [25891784]{.underline}. (Start coordinate of second exon + 62 bases).
+The sequence on this page alternates between black and blue text to indicate exons. Our V is in the second-to-last exon. The table above lists the real genomic coordinates of each exon, however those coordinates are relative to the forward strand but the sequence is on the reverse strand. This means that the second-to-last exon in the sequence is actually the second exon in the table above, **and** the start of the exon is at the end of the sequence. Counting backward from the end, the V is the 21st amino acid. The G in the codon is the only base that changes, so the location of the G in the sequence is 20\*3 + 2 = 62. Then, the real coordinate of this G is 25891722 + 62 = **25891784**. (Start coordinate of second exon + 62 bases).
 
-Now we need to convert this to **our** genomic coordinates. When I made the custom genome, I appended each human gene as its own chromosome to the mouse genome, and each human gene starts at coordinate 1. We go back to the [Ensembl archive page](https://may2024.archive.ensembl.org/Homo_sapiens/Gene/Summary?db=core;g=ENSG00000142192;r=21:25880535-26171128;t=ENST00000346798) for APP and find that it lists the genomic coordinates of the gene as 25,880,535-26,171,128. Make sure you are looking at the [gene]{.underline} coordinates and not the transcript coordinates. These coordinates are relative to the forward strand, so we use 25,880,535 as our start. The coordinate of the G relative to our genome is 25891784 - 25880535 = [11249]{.underline}. This number is already 0-based for the intervals file since we did not add 1 to it.
+Now we need to convert this to **our** genomic coordinates. When I made the custom genome, I appended each human gene as its own chromosome to the mouse genome, and each human gene starts at coordinate 1. We go back to the [Ensembl archive page](https://may2024.archive.ensembl.org/Homo_sapiens/Gene/Summary?db=core;g=ENSG00000142192;r=21:25880535-26171128;t=ENST00000346798) for APP and find that it lists the genomic coordinates of the gene as 25,880,535-26,171,128. Make sure you are looking at the **gene** coordinates and not the transcript coordinates. These coordinates are relative to the forward strand, so we use 25,880,535 as our start. The coordinate of the G relative to our genome is 25891784 - 25880535 = **11249**. This number is already 0-based for the intervals file since we did not add 1 to it.
 
 ### Method 2 (shorter option with less counting)
 
-Since this is a known SNP, we can take a shortcut. Find the codon on the CCDS page as above. Copy the sequence starting a few bases before the codon and ending a few bases after. I used `ATCGTCATC`. Go back to the Ensembl archive page for transcript APP-201 and click on the [“Exons” tab](https://may2024.archive.ensembl.org/Homo_sapiens/Transcript/Exons?db=core;g=ENSG00000142192;r=21:25880535-26171128;t=ENST00000346798). Search for the sequence on the page. With all the markup it is a little hard to find the match, but you can see it in the second-to-last exon. Click directly on the G, and it will tell you that its genomic coordinate is [25891784]{.underline}. Then subtract 25880535 and as above.
+Since this is a known SNP, we can take a shortcut. Find the codon on the CCDS page as above. Copy the sequence starting a few bases before the codon and ending a few bases after. I used `ATCGTCATC`. Go back to the Ensembl archive page for transcript APP-201 and click on the [“Exons” tab](https://may2024.archive.ensembl.org/Homo_sapiens/Transcript/Exons?db=core;g=ENSG00000142192;r=21:25880535-26171128;t=ENST00000346798). Search for the sequence on the page. With all the markup it is a little hard to find the match, but you can see it in the second-to-last exon. Click directly on the G, and it will tell you that its genomic coordinate is **25891784]**. Then subtract 25880535 and as above.
 
 ### Add to the intervals file
 
-Now that we have our coordinate of [11249]{.underline}, we can add it to the `intervals_universal_genome.bed` file as a new line (tab-separated):
+Now that we have our coordinate of **11249**, we can add it to the `intervals_universal_genome.bed` file as a new line (tab-separated):
 
 ```         
 21  11249 11251 APP-LonV717I
@@ -114,7 +134,7 @@ Now that we have our coordinate of [11249]{.underline}, we can add it to the `in
 
 **Notes:**
 
--   Even though we only care about one base, the pipeline throws errors if the start and end coordinates are only 1 base apart (e.g. 11249 to 11250), so all of the mutations that are 1 base only actually have intervals that are [2 bases wide]{.underline}.
+-   Even though we only care about one base, the pipeline throws errors if the start and end coordinates are only 1 base apart (e.g. 11249 to 11250), so all of the mutations that are 1 base only actually have intervals that are **2 bases wide**.
 
 -   These coordinates are 0-based coordinates. Since we subtracted the G coordinate from the start-of-gene coordinate, the final coordinate is already 0-based. However, if you were to use a given coordinate from the mouse genome, which doesn’t require subtracting anything, you would need to subtract 1 from the coordinate for the intervals file.
 
@@ -206,7 +226,7 @@ This should print out `AGTGG`, which covers our silent mutations and the target 
 
 ### APP-LonV717I
 
-The “London” familial AD mutation in human APP. This point mutation changes amino acid 717 of the APP-201 transcript from V → I ([G]{.underline}TC → [A]{.underline}TC).
+The “London” familial AD mutation in human APP. This point mutation changes amino acid 717 of the APP-201 transcript from V → I (**G**TC → **A**TC).
 
 **Location:** chr 21: 11250 (our genome), chr 21: 25891784 (Human genome)
 
@@ -218,7 +238,7 @@ The “London” familial AD mutation in human APP. This point mutation changes 
 
 ### APP-FloI716V
 
-The “Florida” familial AD mutation in human APP. Changes amino acid 716 of the APP-201 transcript from I → V ([A]{.underline}TC → [G]{.underline}TC).
+The “Florida” familial AD mutation in human APP. Changes amino acid 716 of the APP-201 transcript from I → V (**A**TC → **G**TC).
 
 **Location:** chr 21: 11253 (our genome), chr 21: 25891787 (Human genome)
 
@@ -230,7 +250,7 @@ The “Florida” familial AD mutation in human APP. Changes amino acid 716 of t
 
 ### APP-SweM671L / APP-SweK670N
 
-The “Swedish” familial AD mutation in human APP. This consists of two point mutations in adjacent amino acids of the APP-201 transcript: AA 671 changes from M → L ([A]{.underline}TG → [C]{.underline}TG) and AA 670 changes from K → N (AA[G]{.underline} → AA[T]{.underline}).
+The “Swedish” familial AD mutation in human APP. This consists of two point mutations in adjacent amino acids of the APP-201 transcript: AA 671 changes from M → L (**A**TG → **C**TG) and AA 670 changes from K → N (AA**G** → AA**T**).
 
 **Location:** chr 21: 17092 - 17093 (our genome), chr 21: 25897626 - 25897627 (Human genome)
 
@@ -242,7 +262,7 @@ The “Swedish” familial AD mutation in human APP. This consists of two point 
 
 ### PSEN1-M146L
 
-A familial AD mutation in human PSEN1. Changes AA 146 of the PSEN-201 transcript from M → L ([A]{.underline}TG → [C]{.underline}TG).
+A familial AD mutation in human PSEN1. Changes AA 146 of the PSEN-201 transcript from M → L (**A**TG → **C**TG).
 
 **Location:** chr 23: 37246 (our genome), chr14: 73173663 (Human genome)
 
@@ -254,7 +274,7 @@ A familial AD mutation in human PSEN1. Changes AA 146 of the PSEN-201 transcript
 
 ### PSEN1-L286V
 
-A familial AD mutation in human PSEN1. Changes AA 286 of the PSEN-201 transcript from L → V ([C]{.underline}TC → [G]{.underline}TC).
+A familial AD mutation in human PSEN1. Changes AA 286 of the PSEN-201 transcript from L → V (**C**TC → **G**TC).
 
 **Location:** chr 23: 61700 (our genome), chr14: 73198117 (Human genome)
 
@@ -270,11 +290,11 @@ A familial AD mutation in human PSEN1. Changes AA 286 of the PSEN-201 transcript
 
 ### Abca7-V1613M
 
-A LOAD mutation in the mouse *Abca7* gene. Changes AA 1613 of the *Abca7-201* transcript from V → M ([G]{.underline}TG → [A]{.underline}TG). Introduction of the mutation also produced two silent mutations upstream. Note that the genotype below is labeled with the corresponding human mutation relative to the human gene (V1599M) rather than the mouse gene (V1613M).
+A LOAD mutation in the mouse *Abca7* gene. Changes AA 1613 of the *Abca7-201* transcript from V → M (**G**TG → **A**TG). Introduction of the mutation also produced two silent mutations upstream. Note that the genotype below is labeled with the corresponding human mutation relative to the human gene (V1599M) rather than the mouse gene (V1613M).
 
 **Location:** chr 10: 79846011 (silent), 79846014 (silent), 79846015 (target)
 
-**Sequence in interval:** [A]{.underline}GT[GG]{.underline} → [C]{.underline}GT[CA]{.underline}
+**Sequence in interval:** **A**GT**GG** → **C**GT**CA**
 
 **Genotype:** Abca7-V1599M_homozygous
 
@@ -286,11 +306,11 @@ A LOAD mutation in the mouse *Abca7* gene. Changes AA 1613 of the *Abca7-201* tr
 
 ### Abi3-S212F
 
-A LOAD mutation in the mouse *Abi3* gene. Changes AA 212 of the *Abi3-201* transcript from S → F (T[CT]{.underline} → T[TC]{.underline}) on the reverse strand. It also introduces a silent mutation upstream. Note that the genotype below is labeled with the corresponding human mutation relative to the human gene (S209F) rather than the mouse gene (S212F).
+A LOAD mutation in the mouse *Abi3* gene. Changes AA 212 of the *Abi3-201* transcript from S → F (T**CT** → T**TC**) on the reverse strand. It also introduces a silent mutation upstream. Note that the genotype below is labeled with the corresponding human mutation relative to the human gene (S209F) rather than the mouse gene (S212F).
 
 **Location:** chr11: 95724846-95724847 (target), 95724849 (silent)
 
-**Sequence in interval:** [AG]{.underline}A[G]{.underline} → [GA]{.underline}A[T]{.underline} ([C]{.underline}T[CT]{.underline} → [A]{.underline}T[TC]{.underline} on reverse strand)
+**Sequence in interval:** **AG**A**G** → **GA**A**T** (**C**T**CT** → AT**TC** on reverse strand)
 
 **Genotype:** Abi3-S209F_homozygous
 
@@ -304,11 +324,11 @@ A LOAD mutation in the mouse *Abi3* gene. Changes AA 212 of the *Abi3-201* trans
 
 ### App-KI
 
-A humanization of mouse *App* in which 3 point mutations are introduced into Exon 14 on the reverse strand. AA 676 of transcript *App-206* is changed from G-\>R ([G]{.underline}GA → [C]{.underline}GA), AA 681 is changed from F-\>Y (T[T]{.underline}T → T[A]{.underline}T), and AA 684 is changed from R-\>H (C[GC]{.underline} → C[AT]{.underline}).
+A humanization of mouse *App* in which 3 point mutations are introduced into Exon 14 on the reverse strand. AA 676 of transcript *App-206* is changed from G → R (**G**GA → **C**GA), AA 681 is changed from F → Y (T**T**T → T**A**T), and AA 684 is changed from R → H (C**GC** → C**AT**).
 
 **Location:** chr16:84762596, 84762580, 84762570 - 84762571
 
-**Sequence at interval:** [GC]{.underline}GGACTTCA[A]{.underline}ATCCTGAATCATGTC[C]{.underline} → [AT]{.underline}GGACTTCA[T]{.underline}ATCCTGAATCATGTC[G]{.underline} ([G]{.underline}GACATGATTCAGGAT[T]{.underline}TGAAGTCC[GC]{.underline} → [C]{.underline}GACATGATTCAGGAT[A]{.underline}TGAAGTCC[AT]{.underline} on reverse strand)
+**Sequence at interval:** **GC**GGACTTCA**A**ATCCTGAATCATGTC**C** → **AT**GGACTTCA**T**ATCCTGAATCATGTC**G** (**G**GACATGATTCAGGAT**T**TGAAGTCC**GC** → **C**GACATGATTCAGGAT**A**TGAAGTCC**AT** on reverse strand)
 
 **Genotypes:** hAbeta-KI_LoxP_homozygous, LOAD2
 
@@ -318,11 +338,11 @@ A humanization of mouse *App* in which 3 point mutations are introduced into Exo
 
 ### Bin1-K358R
 
-A LOAD mutation in the mouse *Bin1* gene. Changes AA 537 of the *Bin1-201* transcript from K → R (AAA → AGG). It also introduces a silent mutation (C → G) one base upstream. Note that K358R is the notation for the human notation, not the mouse notation, which has several different names.
+A LOAD mutation in the mouse *Bin1* gene. Changes AA 537 of the *Bin1-201* transcript from K → R (A**AA** → A**GG**). It also introduces a silent mutation (C → G) one base upstream. Note that K358R is the notation for the human notation, not the mouse notation, which has several different names.
 
 **Location:** chr18:32565427 (silent), 32565429-32565430 (target)
 
-**Sequence in interval:** [C]{.underline}A[AA]{.underline} → [G]{.underline}A[GG]{.underline}
+**Sequence in interval:** **C**A**AA** → **G**A**GG**
 
 **Genotype:** Bin1-K358R_homozygous
 
@@ -348,7 +368,7 @@ This is a knockout of exon 3 of the mouse *Il1rap* gene. For detection we use th
 
 ### Il34\*Y213
 
-A LOAD mutation in the mouse *Il34* gene. Changes AA 213 of the *Il34-201* transcript from Y → stop codon (T[AC]{.underline}-\>T[GA]{.underline}).
+A LOAD mutation in the mouse *Il34* gene. Changes AA 213 of the *Il34-201* transcript from Y → stop codon (T**AC** → T**GA**).
 
 **Location:** chr8: 111468980 - 111468981
 
@@ -380,11 +400,11 @@ A LOAD mutation in the mouse *Picalm* gene. Changes AA 465 of the *Picalm-206* t
 
 ### Psen1-M146V
 
-A familial AD mutation in the mouse *Psen1* gene. Changes AA 145 and 146 from IM → VV ([A]{.underline}T[TA]{.underline}TG → [G]{.underline}T[GG]{.underline}TG).
+A familial AD mutation in the mouse *Psen1* gene. Changes AA 145 and 146 from IM → VV (**A**T**TA**TG → **G**T**GG**TG).
 
 **Location:** chr12: 83761632, 83761634-83761635
 
-**Sequence in interval:** [A]{.underline}T[TA]{.underline} → [G]{.underline}T[GG]{.underline}
+**Sequence in interval:** **A**T**TA** → **G**T**GG**
 
 **Genotype:** 3xTg-AD_carrier
 
@@ -394,7 +414,7 @@ A familial AD mutation in the mouse *Psen1* gene. Changes AA 145 and 146 from IM
 
 ### Ptprb\*D57N
 
-A LOAD mutation in the mouse *Ptprb* gene. Changes AA 57 of the *Ptprb-203* transcript from D → N ([G]{.underline}AT -\> [A]{.underline}AT).
+A LOAD mutation in the mouse *Ptprb* gene. Changes AA 57 of the *Ptprb-203* transcript from D → N (**G**AT → **A**AT).
 
 **Location:** chr10: 116113190
 
@@ -408,7 +428,7 @@ A LOAD mutation in the mouse *Ptprb* gene. Changes AA 57 of the *Ptprb-203* tran
 
 ### Trem2-R47H
 
-A LOAD mutation in the mouse *Trem2* gene that changes AA 47 from R → H (C[G]{.underline}C → C[A]{.underline}C). It also introduces 2 silent mutations downstream, which we leave out of the intervals file.
+A LOAD mutation in the mouse *Trem2* gene that changes AA 47 from R → H (C**G**C → C**A**C). It also introduces 2 silent mutations downstream, which we leave out of the intervals file.
 
 **Location:** chr17: 48655584
 
@@ -420,7 +440,7 @@ A LOAD mutation in the mouse *Trem2* gene that changes AA 47 from R → H (C[G]{
 
 ### Trem2-R47H-NSS
 
-Identical to the Trem2-R47H mutation except that it changes two bases of AA 47 (C[GC]{.underline} → C[AT]{.underline}) instead of one, and introduces 9 silent mutations upstream, which we leave out of the intervals file.
+Identical to the Trem2-R47H mutation except that it changes two bases of AA 47 (C**GC** → C**AT**) instead of one, and introduces 9 silent mutations upstream, which we leave out of the intervals file.
 
 **Location:** chr17: 48655584-48655585
 
@@ -434,7 +454,7 @@ Identical to the Trem2-R47H mutation except that it changes two bases of AA 47 (
 
 ------------------------------------------------------------------------
 
-## Excluded
+## Excluded mutations
 
 ------------------------------------------------------------------------
 
@@ -490,7 +510,7 @@ A knock-in of \~2000 bases of the human CLU gene into the mouse *Clu* gene. This
 
 ### **Epha1-exon1-SNP**
 
-A LOAD mutation in the mouse *Epha1* gene. It is a silent mutation in AA 24 of the *Epha1-201* transcript (GC[G]{.underline} → GC[T]{.underline}, which are both Alanine).
+A LOAD mutation in the mouse *Epha1* gene. It is a silent mutation in AA 24 of the *Epha1-201* transcript (GC**G** → GC**T**, which are both Alanine).
 
 **Location:** chr6: 42350073
 

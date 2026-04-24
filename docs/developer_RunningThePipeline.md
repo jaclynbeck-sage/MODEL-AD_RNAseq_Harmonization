@@ -270,19 +270,19 @@ This step does some cleanup on Synapse files and merge all of the separate count
 
 First, this step sets the provenance on the newly-created counts files to point to all the files that were used to generate it. Counts files are renamed in the process. Next, step gathers all the counts files for all the studies in `Model_AD_SynID_list.csv` and concatenates them into a single matrix. It does this for all 4 types of RSEM output.
 
-**File:** 07_SYN_UpdateProvenance.R
-
-**Uploads:** 4 files:
-
--   [Model-AD_all_studies.gene_counts.tsv](https://www.synapse.org/Synapse:syn62690577)
-
--   [Model-AD_all_studies.gene_tpm.tsv](https://www.synapse.org/Synapse:syn62690622)
-
--   [Model-AD_all_studies.transcript_counts.tsv](https://www.synapse.org/Synapse:syn62690714)
-
--   [Model-AD_all_studies.transcript_tpm.tsv](https://www.synapse.org/Synapse:syn62690807)
-
-**Edits required if adding new study:** None
+> **File:** 07_SYN_UpdateProvenance.R
+>
+> **Uploads:** 4 files:
+>
+> -   [Model-AD_all_studies.gene_counts.tsv](https://www.synapse.org/Synapse:syn62690577)
+>
+> -   [Model-AD_all_studies.gene_tpm.tsv](https://www.synapse.org/Synapse:syn62690622)
+>
+> -   [Model-AD_all_studies.transcript_counts.tsv](https://www.synapse.org/Synapse:syn62690714)
+>
+> -   [Model-AD_all_studies.transcript_tpm.tsv](https://www.synapse.org/Synapse:syn62690807)
+>
+> **Edits required if adding new study:** None
 
 ------------------------------------------------------------------------
 
