@@ -451,7 +451,6 @@ synapse_upload_de(params_load1$study, provenance_df, tmp_folder_ids,
                   load1_de_file, load1_norm_files)
 
 
-
 ## UCI_3xTg-AD -----------------------------------------------------------------
 
 params_3x <- list(
@@ -599,7 +598,66 @@ synapse_upload_de(params_abca7$study, provenance_df, tmp_folder_ids,
                   de_abca7_file, norm_abca7_files)
 
 
-## UCI_Trem2-R47H_NSS ---------------------------------------------------------------
+## UCI_Clu-h2kbKI --------------------------------------------------------------
+
+# For this study, there are two sequencing batches but they correspond to age
+# group: all 4 month samples are in one batch and all 12 month samples are in
+# another. Therefore we do not need to batch correct the data.
+
+params_clu <- list(
+  study = "UCI_Clu-h2kbKI",
+  model_name = "Clu-h2kbKI",
+  ref_genotype = "5XFAD_noncarrier",
+  # We want Clu-homozygous vs WT, and Clu-5xFAD vs 5xFAD for the explorer
+  contrasts = list(c("genotype", "Clu-rs2279590_KI_homozygous", "5XFAD_noncarrier"),
+                   c("genotype", "5XFAD_carrier; Clu-rs2279590_KI_homozygous", "5XFAD_carrier"))
+)
+
+res_clu <- get_all_de_results(
+  metadata_all, counts, params_clu,
+  group_cols = c("sex", "age_group"),
+  model_vars = c("genotype")
+)
+
+res_clu_mf <- get_all_de_results(
+  metadata_all, counts, params_clu,
+  group_cols = c("age_group"),
+  model_vars = c("genotype", "sex")
+)
+
+res_clu_all <- rbind(res_clu, res_clu_mf) |>
+  # Re-name model for certain genotypes to work with the explorer
+  mutate(model = ifelse(case == "5XFAD_carrier; Clu-rs2279590_KI_homozygous",
+                        "Clu-h2kbKI.5xFAD", model))
+
+de_clu_file <- str_glue("output/de_output/{params_clu$study}_differential_expression.csv")
+write.csv(res_clu_all, de_clu_file,
+          row.names = FALSE, quote = FALSE)
+
+norm_clu <- get_norm_counts(subset(metadata_all, study == params_clu$study),
+                            counts, params_clu$model_name) |>
+  # Re-name model for certain genotypes to work with the explorer
+  mutate(model = case_match(genotype,
+                            "5XFAD_carrier; Clu-rs2279590_KI_homozygous" ~ "Clu-h2kbKI.5xFAD",
+                            "5XFAD_carrier" ~ "Clu-h2kbKI.5xFAD",
+                            .default = model))
+
+# Split into one file per "model" for the explorer
+norm_clu_files <- lapply(unique(norm_clu$model), function(model_name) {
+  norm_data <- subset(norm_clu, model == model_name)
+
+  norm_file <- str_glue("output/de_output/UCI_{model_name}_normalized_expression.csv")
+  write.csv(norm_data, norm_file,
+            row.names = FALSE, quote = FALSE)
+  return(norm_file)
+})
+
+# Upload to Synapse
+synapse_upload_de(params_clu$study, provenance_df, tmp_folder_ids,
+                  de_clu_file, norm_clu_files)
+
+
+## UCI_Trem2-R47H_NSS ----------------------------------------------------------
 
 # This data has all 3 batch variables filled in (libraryBatch, sequencingBatch,
 # rnaBatch). None of them are entirely unique combinations of another even when
