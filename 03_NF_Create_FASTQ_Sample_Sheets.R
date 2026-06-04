@@ -80,8 +80,7 @@ for (N in 1:nrow(syn_ids)) {
 
   ## Get a list of all fastqs available ----------------------------------------
 
-  # Query the portal -- this query will work correctly for all studies except
-  # UCI_ABCA7
+  # Query the portal -- this query will work correctly for all studies
   query <- str_glue(
     "SELECT * FROM {syn_portal_query_id} WHERE ",
     "( ( \"assay\" HAS ( 'long-read rnaSeq', 'rnaSeq' ) ) AND ",
@@ -89,15 +88,6 @@ for (N in 1:nrow(syn_ids)) {
     "( \"isMultiSpecimen\" = 'false' OR \"isMultiSpecimen\" IS NULL ) AND ",
     "( \"study\" HAS ( '{row$Study}' ) ) )"
   )
-
-  # UCI_ABCA7 fastq files are not all properly annotated
-  if (row$Study == "UCI_ABCA7") {
-    query <- str_glue(
-      "SELECT * FROM {syn_portal_query_id} WHERE ",
-      "( ( \"name\" LIKE '%fq.gz%' ) ) AND ",
-      "( ( ( \"study\" HAS ( '{row$Study}' ) ) ) )"
-    )
-  }
 
   result <- synTableQuery(query, includeRowIdAndRowVersion = FALSE)
 
@@ -202,7 +192,7 @@ for (N in 1:nrow(syn_ids)) {
 
   provenance <- select(all_fastqs, id, versionNumber, name)
   provenance <- do.call(rbind,
-                        list(meta_list[[row$Study]]$provenance,
+                        list(select(meta_list[[row$Study]]$provenance, -study),
                              meta_provenance,
                              provenance))
 
