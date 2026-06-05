@@ -98,7 +98,7 @@ all_folders <- mirror(top_level_folder, project_syn_ids$staging, "Staging")
 # Remove genome benchmarking subfolders, add a config-friendly name, add the
 # path to the released data, edit some of the config names
 all_folders <- subset(all_folders, !grepl("Custom Genome Benchmarking\\/", path)) |>
-  mutate(config_name = str_replace_all(name, "\\(|\\)", "") |>
+  mutate(config_name = str_replace_all(name, " \\(.*\\)", "") |>
            tolower() |>
            str_replace_all(" ", "_"),
          config_name = case_match(

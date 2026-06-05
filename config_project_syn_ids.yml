@@ -3,40 +3,40 @@ default:
 
   # IDs for staging folders (upload or download)
   staging_syn_ids:
-    data: "syn75315757" 	# Staging/Data
-    analysis: "syn75315758" 	# Staging/Data/Analysis
-    de_analysis: "syn75315759" 	# Staging/Data/Analysis/Differential Expression Analysis
-    gene_expression_rna_seq: "syn75315760" 	# Staging/Data/Gene Expression (RNA Seq)
-    bam_files: "syn75315761" 	# Staging/Data/Gene Expression (RNA Seq)/BAM Files
+    data: "syn75315757"             # Staging/Data
+    analysis: "syn75315758"         # Staging/Data/Analysis
+    de_analysis: "syn75315759" 	    # Staging/Data/Analysis/Differential Expression Analysis
+    gene_expression: "syn75315760" 	# Staging/Data/Gene Expression (RNA Seq)
+    bam_files: "syn75315761" 	      # Staging/Data/Gene Expression (RNA Seq)/BAM Files
     raw_gene_counts: "syn75315763" 	# Staging/Data/Gene Expression (RNA Seq)/Raw Gene Counts
-    reference_genome: "syn75315765" 	# Staging/Data/Reference Genome
-    metadata: "syn75315766" 	# Staging/Metadata
-    pipeline_data: "syn75315768" 	# Staging/Pipeline Data
+    reference_genome: "syn75315765" # Staging/Data/Reference Genome
+    metadata: "syn75315766"         # Staging/Metadata
+    pipeline_data: "syn75315768"    # Staging/Pipeline Data
     custom_genome_benchmarking: "syn75315770" 	# Staging/Pipeline Data/Custom Genome Benchmarking
     genotype_validation: "syn75315773" 	# Staging/Pipeline Data/Genotype Validation
-    nf_pipeline_input: "syn75315774" 	# Staging/Pipeline Data/Nextflow Pipeline Input
-    nf_configuration: "syn75315775" 	# Staging/Pipeline Data/Nextflow Pipeline Input/Configuration
-    nf_sample_sheets: "syn75315776" 	# Staging/Pipeline Data/Nextflow Pipeline Input/Sample Sheets
-    quality_control: "syn75315777" 	# Staging/Pipeline Data/Quality Control
+    nf_pipeline_input: "syn75315774" 	  # Staging/Pipeline Data/Nextflow Pipeline Input
+    nf_configuration: "syn75315775"     # Staging/Pipeline Data/Nextflow Pipeline Input/Configuration
+    nf_sample_sheets: "syn75315776"     # Staging/Pipeline Data/Nextflow Pipeline Input/Sample Sheets
+    quality_control: "syn75315777"      # Staging/Pipeline Data/Quality Control
     reference_genome_inputs: "syn75315778" 	# Staging/Pipeline Data/Reference Genome Inputs
-    human_gene_input: "syn75315779" 	# Staging/Pipeline Data/Reference Genome Inputs/Human Gene Input
+    human_gene_input: "syn75315779"     # Staging/Pipeline Data/Reference Genome Inputs/Human Gene Input
 
   # IDs for released data folders (download only)
   released_data_syn_ids:
-    data: "syn74489876" 	# Data/Data
-    analysis: "syn64299952" 	# Data/Data/Analysis
-    de_analysis: "syn51132858" 	# Data/Data/Analysis/Differential Expression Analysis
-    gene_expression_rna_seq: "syn64314221" 	# Data/Data/Gene Expression (RNA Seq)
-    bam_files: "syn63856101" 	# Data/Data/Gene Expression (RNA Seq)/BAM Files
+    data: "syn74489876"             # Data/Data
+    analysis: "syn64299952"         # Data/Data/Analysis
+    de_analysis: "syn51132858" 	    # Data/Data/Analysis/Differential Expression Analysis
+    gene_expression: "syn64314221" 	# Data/Data/Gene Expression (RNA Seq)
+    bam_files: "syn63856101"        # Data/Data/Gene Expression (RNA Seq)/BAM Files
     raw_gene_counts: "syn51132850" 	# Data/Data/Gene Expression (RNA Seq)/Raw Gene Counts
-    reference_genome: "syn74489925" 	# Data/Data/Reference Genome
-    metadata: "syn61850200" 	# Data/Metadata
-    pipeline_data: "syn74489867" 	# Data/Pipeline Data
+    reference_genome: "syn74489925" # Data/Data/Reference Genome
+    metadata: "syn61850200"         # Data/Metadata
+    pipeline_data: "syn74489867"    # Data/Pipeline Data
     custom_genome_benchmarking: "syn72340787" 	# Data/Pipeline Data/Custom Genome Benchmarking
     genotype_validation: "syn63913842" 	# Data/Pipeline Data/Genotype Validation
-    nf_pipeline_input: "syn62147109" 	# Data/Pipeline Data/Nextflow Pipeline Input
-    nf_configuration: "syn62147114" 	# Data/Pipeline Data/Nextflow Pipeline Input/Configuration
-    nf_sample_sheets: "syn62147112" 	# Data/Pipeline Data/Nextflow Pipeline Input/Sample Sheets
-    quality_control: "syn74490531" 	# Data/Pipeline Data/Quality Control
+    nf_pipeline_input: "syn62147109"    # Data/Pipeline Data/Nextflow Pipeline Input
+    nf_configuration: "syn62147114"     # Data/Pipeline Data/Nextflow Pipeline Input/Configuration
+    nf_sample_sheets: "syn62147112"     # Data/Pipeline Data/Nextflow Pipeline Input/Sample Sheets
+    quality_control: "syn74490531"      # Data/Pipeline Data/Quality Control
     reference_genome_inputs: "syn61779396" 	# Data/Pipeline Data/Reference Genome Inputs
-    human_gene_input: "syn64416697" 	# Data/Pipeline Data/Reference Genome Inputs/Human Gene Input
+    human_gene_input: "syn64416697"     # Data/Pipeline Data/Reference Genome Inputs/Human Gene Input
