@@ -19,20 +19,11 @@ default:
     ]
 
   # Synapse IDs that never change
-  project_syn_ids:
+  top_level_syn_ids:
     main_project: "syn25882591"   # Synapse ID of the whole project
     released_data: "syn25882597"  # Top-level "Data" folder, which is public
     staging: "syn25882599"        # Top-level "Staging" folder, which is for unreleased data
-    #genotype_validation: "syn63913842"  # Staging/Genotype Validation
-    #metadata: "syn61850200"             # Staging/Metadata
-    #nextflow_input: "syn62147109"       # Staging/Nextflow Pipeline Input
-    #nf_samplesheets: "syn62147112"      # Staging/Nextflow Pipeline Input/Sample Sheets
-    #nf_configs: "syn62147114"           # Staging/Nextflow Pipeline Input/Configuration
-    #reference_genomes: "syn61779396"    # Staging/Reference Genomes
-    #bams: "syn63856101"           # Staging/Gene Expression (RNA Seq)/BAM Files
-    #raw_counts: "syn51132850"     # Staging/Gene Expression (RNA Seq)/Raw Gene Counts
-    #diff_expr: "syn51132858"      # Staging/Analysis/Differential Expression Analysis
-    #norm_counts: "syn69058670"    # Model-AD explorer source data project, norm counts folder
+    norm_counts: "syn69058670"    # Model-AD explorer source data project, norm counts folder
 
   # Load staging and released data IDs
   staging_syn_ids: !expr config::get("staging_syn_ids", file="config_project_syn_ids.yml")

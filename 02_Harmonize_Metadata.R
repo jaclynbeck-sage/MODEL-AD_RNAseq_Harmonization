@@ -28,8 +28,10 @@ library(synapser)
 library(stringr)
 library(dplyr)
 
-folder_syn_ids <- config::get("folder_syn_ids", config = "default")
-studies <- config::get("studies", config = "default")
+source("util_functions.R")
+
+staging_syn_ids <- config::get("staging_syn_ids")
+studies <- config::get("studies")
 
 synLogin(silent = TRUE)
 tmp_dir <- file.path("output", "tmp")
@@ -193,6 +195,7 @@ geno_map <- c(
   "3xTg-AD_homozygous" = "3xTg-AD_carrier",
   "3XTg-AD_noncarrier" = "3xTg-AD_noncarrier",
   "5XFAD_hemizygous" = "5XFAD_carrier",
+  "BIN1" = "Bin1",
   "Homozygous" = "homozygous",
   "Heterozygous" = "heterozygous",
   "NA_Inconclusive" = NA,
@@ -250,17 +253,17 @@ for (study_name in unique(metadata_combined$study)) {
 
   write.csv(study_data, study_file, row.names = FALSE, quote = FALSE)
 
-  syn_file <- File(study_file, parent = folder_syn_ids$metadata)
-
+  # Upload to Staging. syn_safe_upload ensures the file will only get uploaded
+  # if it doesn't already have an identical version somewhere on Synapse
   all_syn_ids <- subset(metadata_list, Study == study_name) |>
     select(-Study) |>
     as.character()
 
-  github_link <- paste0(config::get("github_repo_url", config = "default"),
+  github_link <- paste0(config::get("github_repo_url"),
                         "/blob/main/02_Harmonize_Metadata.R")
 
-  synStore(syn_file,
-           used = all_syn_ids,
-           executed = github_link,
-           forceVersion = FALSE)
+  new_file <- syn_safe_upload(study_file,
+                              parent_id = staging_syn_ids$metadata,
+                              used = all_syn_ids,
+                              executed = github_link)
 }

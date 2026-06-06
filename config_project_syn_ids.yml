@@ -16,7 +16,7 @@ default:
     genotype_validation: "syn75315773" 	# Staging/Pipeline Data/Genotype Validation
     nf_pipeline_input: "syn75315774" 	  # Staging/Pipeline Data/Nextflow Pipeline Input
     nf_configuration: "syn75315775"     # Staging/Pipeline Data/Nextflow Pipeline Input/Configuration
-    nf_sample_sheets: "syn75315776"     # Staging/Pipeline Data/Nextflow Pipeline Input/Sample Sheets
+    nf_samplesheets: "syn75315776"      # Staging/Pipeline Data/Nextflow Pipeline Input/Sample Sheets
     quality_control: "syn75315777"      # Staging/Pipeline Data/Quality Control
     reference_genome_inputs: "syn75315778" 	# Staging/Pipeline Data/Reference Genome Inputs
     human_gene_input: "syn75315779"     # Staging/Pipeline Data/Reference Genome Inputs/Human Gene Input
@@ -36,7 +36,7 @@ default:
     genotype_validation: "syn63913842" 	# Data/Pipeline Data/Genotype Validation
     nf_pipeline_input: "syn62147109"    # Data/Pipeline Data/Nextflow Pipeline Input
     nf_configuration: "syn62147114"     # Data/Pipeline Data/Nextflow Pipeline Input/Configuration
-    nf_sample_sheets: "syn62147112"     # Data/Pipeline Data/Nextflow Pipeline Input/Sample Sheets
+    nf_samplesheets: "syn62147112"      # Data/Pipeline Data/Nextflow Pipeline Input/Sample Sheets
     quality_control: "syn74490531"      # Data/Pipeline Data/Quality Control
     reference_genome_inputs: "syn61779396" 	# Data/Pipeline Data/Reference Genome Inputs
     human_gene_input: "syn64416697"     # Data/Pipeline Data/Reference Genome Inputs/Human Gene Input

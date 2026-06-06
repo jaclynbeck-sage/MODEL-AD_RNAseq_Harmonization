@@ -24,7 +24,7 @@ synLogin(silent = TRUE)
 
 # Set up -----------------------------------------------------------------------
 
-project_syn_ids <- config::get("project_syn_ids")
+top_level_syn_ids <- config::get("top_level_syn_ids")
 
 # List of studies that should get folders added in various places.
 study_list <- config::get("studies")
@@ -92,8 +92,8 @@ mirror <- function(item, staging_parent_id, folder_path) {
 
 ## Mirror the folders ----------------------------------------------------------
 
-top_level_folder <- synGet(project_syn_ids$released_data)
-all_folders <- mirror(top_level_folder, project_syn_ids$staging, "Staging")
+top_level_folder <- synGet(top_level_syn_ids$released_data)
+all_folders <- mirror(top_level_folder, top_level_syn_ids$staging, "Staging")
 
 # Remove genome benchmarking subfolders, add a config-friendly name, add the
 # path to the released data, edit some of the config names
@@ -106,7 +106,7 @@ all_folders <- subset(all_folders, !grepl("Custom Genome Benchmarking\\/", path)
            "differential_expression_analysis" ~ "de_analysis",
            "nextflow_pipeline_input" ~ "nf_pipeline_input",
            "configuration" ~ "nf_configuration",
-           "sample_sheets" ~ "nf_sample_sheets",
+           "sample_sheets" ~ "nf_samplesheets",
            .default = config_name
          ),
          released_path = str_replace(path, "Staging", "Data"))

@@ -36,10 +36,10 @@ library(dplyr)
 
 source("util_functions.R")
 
-file_syn_ids <- config::get("file_syn_ids", config = "default")
-folder_syn_ids <- config::get("folder_syn_ids", config = "default")
-syn_portal_query_id <- config::get("adkp_query_id", config = "default")
-studies <- config::get("studies", config = "default")
+file_syn_ids <- config::get("file_syn_ids")
+staging_syn_ids <- config::get("staging_syn_ids")
+syn_portal_query_id <- config::get("adkp_query_id")
+studies <- config::get("studies")
 
 synLogin(silent = TRUE)
 tmp_dir <- file.path("output", "tmp")
@@ -50,16 +50,7 @@ dir.create(tmp_dir, showWarnings = FALSE)
 dir.create(samplesheet_dir, showWarnings = FALSE)
 dir.create(provenance_dir, showWarnings = FALSE)
 
-syn_ids <- read.csv(file.path("data", "Model_AD_SynID_list.csv"),
-                    comment.char = "#") |>
-  subset(Study %in% studies)
-
-stopifnot(all(studies %in% syn_ids$Study))
-
-meta_list <- get_all_metadata(folder_syn_ids$metadata)
-
-# Subset to the studies we want
-meta_list <- meta_list[studies]
+meta_list <- get_all_metadata()
 
 ref_fasta <- synGet(file_syn_ids$ref_fasta, downloadFile = FALSE)
 ref_gtf <- synGet(file_syn_ids$ref_gtf, downloadFile = FALSE)
@@ -73,10 +64,8 @@ colnames(meta_provenance) <- c("id", "versionNumber", "name")
 
 # Create one sample sheet per study --------------------------------------------
 
-for (N in 1:nrow(syn_ids)) {
-  row <- syn_ids[N,]
-  print(row$Study)
-  meta <- meta_list[[row$Study]]$data
+for (study in studies) {
+  meta <- meta_list[[study]]$data
 
   ## Get a list of all fastqs available ----------------------------------------
 
@@ -86,7 +75,7 @@ for (N in 1:nrow(syn_ids)) {
     "( ( \"assay\" HAS ( 'long-read rnaSeq', 'rnaSeq' ) ) AND ",
     "( \"fileFormat\" = 'fastq' ) AND ",
     "( \"isMultiSpecimen\" = 'false' OR \"isMultiSpecimen\" IS NULL ) AND ",
-    "( \"study\" HAS ( '{row$Study}' ) ) )"
+    "( \"study\" HAS ( '{study}' ) ) )"
   )
 
   result <- synTableQuery(query, includeRowIdAndRowVersion = FALSE)
@@ -112,11 +101,11 @@ for (N in 1:nrow(syn_ids)) {
 
   # Temporary: The annotated specimenIDs don't match the updated metadata files
   # for the Jax studies, but the specimenID is in the filename
-  if (row$Study == "Jax.IU.Pitt_5XFAD") {
+  if (study == "Jax.IU.Pitt_5XFAD") {
     tmp_ids <- str_split(all_fastqs$name, "_", simplify = TRUE)[, c(2, 3)]
     all_fastqs$specimenID <- paste0(tmp_ids[, 1], "_", tmp_ids[, 2])
 
-  } else if (row$Study == "UCI_5XFAD") {
+  } else if (study == "UCI_5XFAD") {
     # Specimen IDs in the annotation are formatted with a numerical ID followed
     # by "C_RNAseq" or "H_RNAseq", e.g. "305C_RNAseq". However in the metadata
     # files the IDs are formatted as the numerical ID followed by "rc" or "rh",
@@ -124,7 +113,7 @@ for (N in 1:nrow(syn_ids)) {
     all_fastqs$specimenID <- str_replace(all_fastqs$specimenID, "C_.*", "rc")
     all_fastqs$specimenID <- str_replace(all_fastqs$specimenID, "H_.*", "rh")
 
-  } else if (row$Study == "UCI_ABCA7") {
+  } else if (study == "UCI_ABCA7") {
     # There are 4 fastq files that don't have an annotated specimen ID, but
     # the filename contains an ID that exists in the assay metadata. For these
     # 4 files, we extract the ID from the name and add "lh" to it to get the
@@ -141,7 +130,7 @@ for (N in 1:nrow(syn_ids)) {
 
     all_fastqs$specimenID[missing_inds] <- paste0(fastq_ids, "lh")
 
-  } else if (row$Study == "UCI_Clu-h2kbKI") {
+  } else if (study == "UCI_Clu-h2kbKI") {
     # Fastqs for specimenID "12680lc" are in a folder marked "Deprecated" and
     # should be excluded. There are 8 more fastq files in that folder for 4
     # specimenIDs that don't exist in the metadata, so these are excluded as
@@ -149,11 +138,11 @@ for (N in 1:nrow(syn_ids)) {
     all_fastqs <- subset(all_fastqs, specimenID != "12680lc" &
                            specimenID %in% meta$specimenID)
 
-  } else if (row$Study == "UCI_Trem2_Cuprizone") {
+  } else if (study == "UCI_Trem2_Cuprizone") {
     # Some specimenIDs have an extra "w" in them
     all_fastqs$specimenID <- str_replace(all_fastqs$specimenID, "w", "")
 
-  } else if (row$Study == "UCI_Trem2-R47H_NSS") {
+  } else if (study == "UCI_Trem2-R47H_NSS") {
     # Some samples were re-run so there are 4 associated fastq files instead of
     # 2. In this case, we want to use only the re-sequenced files, which will
     # have "RB1" or "RB2" in the name.
@@ -184,7 +173,7 @@ for (N in 1:nrow(syn_ids)) {
             dplyr::rename(sample = specimenID)
 
   samplesheet_filename <- file.path(samplesheet_dir,
-                                    paste0(row$Study, "_samplesheet_rnaseq.csv"))
+                                    paste0(study, "_samplesheet_rnaseq.csv"))
   write.csv(lines, samplesheet_filename, row.names = FALSE, quote = FALSE)
 
 
@@ -192,12 +181,12 @@ for (N in 1:nrow(syn_ids)) {
 
   provenance <- select(all_fastqs, id, versionNumber, name)
   provenance <- do.call(rbind,
-                        list(select(meta_list[[row$Study]]$provenance, -study),
+                        list(select(meta_list[[study]]$provenance, -study),
                              meta_provenance,
                              provenance))
 
   write.csv(provenance,
-            file.path(provenance_dir, paste0(row$Study, "_provenance.csv")),
+            file.path(provenance_dir, paste0(study, "_provenance.csv")),
             row.names = FALSE, quote = FALSE)
 
 
@@ -211,13 +200,13 @@ for (N in 1:nrow(syn_ids)) {
                     samplesheet_provenance$versionNumber,
                     sep = ".")
 
-  github_link <- paste0(config::get("github_repo_url", config = "default"),
+  github_link <- paste0(config::get("github_repo_url"),
                         "/blob/main/03_NF_Create_FASTQ_Sample_Sheets.R")
-  syn_file <- File(samplesheet_filename, parent = folder_syn_ids$nf_samplesheets)
-  synStore(syn_file,
-           used = used_ids,
-           executed = github_link,
-           forceVersion = FALSE)
+
+  syn_safe_upload(samplesheet_filename,
+                  parent_id = staging_syn_ids$nf_samplesheets,
+                  used = used_ids,
+                  executed = github_link)
 
 
   ## Print warnings for missing fastqs or extra fastqs -------------------------
@@ -225,7 +214,7 @@ for (N in 1:nrow(syn_ids)) {
   if (!all(all_fastqs$specimenID %in% meta$specimenID)) {
     extra <- setdiff(all_fastqs$specimenID, meta$specimenID)
     msg <- str_glue(
-      "WARNING: {row$Study} has {length(extra)} fastq files for specimen(s) ",
+      "WARNING: {study} has {length(extra)} fastq files for specimen(s) ",
       "that do not exist in the metadata: {paste(sort(extra), collapse = ", ")}"
     )
     message(msg)
@@ -234,7 +223,7 @@ for (N in 1:nrow(syn_ids)) {
   if (!all(meta$specimenID %in% all_fastqs$specimenID)) {
     missing <- setdiff(meta$specimenID, all_fastqs$specimenID)
     msg <- str_glue(
-      "WARNING: {row$Study} is missing fastq files for {length(missing)} ",
+      "WARNING: {study} is missing fastq files for {length(missing)} ",
       "specimen(s): {paste(sort(missing), collapse = ", ")}"
     )
     message(msg)

@@ -19,9 +19,9 @@ library(dplyr)
 
 source("util_functions.R")
 
-file_syn_ids <- config::get("file_syn_ids", config = "default")
-folder_syn_ids <- config::get("folder_syn_ids", config = "default")
-studies <- config::get("studies", config = "default")
+file_syn_ids <- config::get("file_syn_ids")
+staging_syn_ids <- config::get("staging_syn_ids")
+studies <- config::get("studies")
 
 synLogin(silent = TRUE)
 tmp_dir <- file.path("output", "tmp")
@@ -32,12 +32,9 @@ dir.create(tmp_dir, showWarnings = FALSE)
 dir.create(samplesheet_dir, showWarnings = FALSE)
 dir.create(provenance_dir, showWarnings = FALSE)
 
-meta_list <- get_all_metadata(folder_syn_ids$metadata)
+meta_list <- get_all_metadata()
 
-# Subset to the studies we want
-meta_list <- meta_list[studies]
-
-bam_folders <- synGetChildren(folder_syn_ids$bams)$asList()
+bam_folders <- syn_get_unique_children("bam_files")
 names(bam_folders) <- sapply(bam_folders, "[[", "name")
 
 
@@ -92,7 +89,8 @@ for (study in studies) {
   ## Create provenance manifest for Step 03 ------------------------------------
 
   provenance <- select(bam_files, id, versionNumber, name) |>
-    mutate(across(id:name, unlist))
+    mutate(across(id:name, unlist),
+           study = study)
 
   provenance <- rbind(meta_list[[study]]$provenance, provenance)
 
@@ -108,13 +106,13 @@ for (study in studies) {
                     provenance$versionNumber,
                     sep = ".")
 
-  github_link <- paste0(config::get("github_repo_url", config = "default"),
+  github_link <- paste0(config::get("github_repo_url"),
                         "/blob/main/05_NF_Create_BAM_Sample_Sheets.R")
-  syn_file <- File(samplesheet_filename, parent = folder_syn_ids$nf_samplesheets)
-  synStore(syn_file,
-           used = used_ids,
-           executed = github_link,
-           forceVersion = FALSE)
+
+  syn_file <- syn_safe_upload(samplesheet_filename,
+                              parent_id = staging_syn_ids$nf_samplesheets,
+                              used = used_ids,
+                              executed = github_link)
 
 
   ## Print warnings for missing fastqs or extra fastqs -------------------------
