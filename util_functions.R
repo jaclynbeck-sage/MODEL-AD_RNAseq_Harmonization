@@ -77,12 +77,12 @@ get_all_metadata <- function() {
 }
 
 
-# Download every count file for every study, read them in, and return them as
-# a list
+# Download every count file for every study, read them in, and return them as a
+# list. We have to check both "Staging/.../Raw Gene Counts" and
+# "Data/.../Raw Gene Counts" for files, to account for cases where a file is in
+# Staging and hasn't been curated and released yet.
 #
 # Arguments:
-#   folder_synid - the Synapse ID of the raw counts folder that contains all
-#     study count data
 #   studies - a character vector of study names. Names must match the official
 #     name of the study in the ADKP
 #   meta_list - a list of metadata data frames, one per study
@@ -93,10 +93,9 @@ get_all_metadata <- function() {
 #
 # Returns:
 #   a list of matrices, one per study
-get_all_counts_files <- function(folder_synid, studies, meta_list, symbol_map,
+get_all_counts_files <- function(studies, meta_list, symbol_map,
                                  count_type = "gene_counts") {
-  count_folders <- synGetChildren(folder_synid,
-                                  includeTypes = list("folder"))$asList()
+  count_folders <- syn_get_unique_children("raw_gene_counts")
   names(count_folders) <- sapply(count_folders, "[[", "name")
 
   stopifnot(all(studies %in% names(count_folders)))
@@ -247,13 +246,15 @@ syn_walk_to_df <- function(walk_list) {
       file_df <- lapply(walk_item[[3]], function(file_item) {
         data.frame(name = basename(file_item[[1]]),
                    id = file_item[[2]],
-                   path = file_item[[1]],
+                   path = paste(folder_df$path, file_item[[1]], sep = "/"),
                    type = "file")
       }) |>
         list_rbind()
+
+      folder_df$children <- paste(folder_df$children, file_df$id, collapse = ", ")
     }
 
-    return(rbind(folder_df, file_df))
+    return(list_rbind(list(folder_df, file_df)))
   }) |>
     list_rbind()
 

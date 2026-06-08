@@ -10,13 +10,12 @@ source("util_functions.R")
 
 # Set up -----------------------------------------------------------------------
 
-file_syn_ids <- config::get("file_syn_ids", config = "default")
-folder_syn_ids <- config::get("folder_syn_ids", config = "default")
-studies <- config::get("studies", config = "default")
+file_syn_ids <- config::get("file_syn_ids")
+studies <- config::get("studies")
 
 synLogin(silent = TRUE)
 
-github <- paste0(config::get("github_repo_url", config = "default"),
+github <- paste0(config::get("github_repo_url"),
                  "/blob/main/08_Sample_Validation.R")
 tmp_dir <- file.path("output", "tmp")
 
@@ -98,7 +97,7 @@ get_variant_mismatches <- function(metadata, geno_info, genotype_pattern,
 
 # Load counts and metadata -----------------------------------------------------
 
-meta_list <- get_all_metadata(folder_syn_ids$metadata)
+meta_list <- get_all_metadata()
 meta_list <- meta_list[studies] |>
   lapply("[[", "data")
 
@@ -114,8 +113,7 @@ symbol_map <- read.csv(symbol_map_file$path) |>
 
 # Read in all counts files
 cat("Reading counts files...\n")
-counts_list <- get_all_counts_files(folder_syn_ids$raw_counts,
-                                    studies,
+counts_list <- get_all_counts_files(studies,
                                     meta_list,
                                     symbol_map,
                                     count_type = "gene_counts") |>
@@ -135,12 +133,11 @@ counts <- counts[, metadata_all$unique_specimenID]
 
 # Find vcf files on Synapse ----------------------------------------------------
 
-# TODO: ideally these would be annotated with the specimenID / study name but
-# for now we walk the folder structure and use the folder name for each sample
-# to determine the specimenID
+# This data has a number of sub-folders and sub-sub-folders, so we use the walk
+# function from synapserutils to get all the files. We use syn_get_unique_children
+# to get all the vcf folders in both Data/ and Staging/.
 
-vcf_folders <- synGetChildren(folder_syn_ids$genotype_validation,
-                              includeTypes = list("folder"))$asList()
+vcf_folders <- syn_get_unique_children("genotype_validation")
 names(vcf_folders) <- sapply(vcf_folders, "[[", "name")
 
 vcf_folders <- vcf_folders[names(vcf_folders) %in% studies]
@@ -151,28 +148,15 @@ study_vcfs <- lapply(vcf_folders, function(folder) {
   folder_structure <- synapserutils::walk(folder$id,
                                           includeTypes = list("file"))$asList()
 
-  samples_df <- lapply(folder_structure, function(item) {
-    # The structure of each item that contains an actual file is a list:
-    #   item[[1]] = list(1 = path of containing folder, 2 = synapse id of folder)
-    #   item[[2]] = list(empty), or a list of sub-folders
-    #   item[[3]] = list of files, where each item is list(1 = file name, 2 = synapse id)
-    if (length(item) < 3 || lengths(item)[3] == 0) {
-      return(NULL)
-    }
+  samples_df <- syn_walk_to_df(folder_structure) |>
+    # Only keep files that end in .gz, not .gz.tbi
+    subset(type == "file" & grepl("gz$", name)) |>
+    mutate(study = folder$name,
+           # Specimen ID is the name of the containing folder
+           specimenID = basename(dirname(path))) |>
+    select(name, id, specimenID, study) |>
+    dplyr::rename(filename = name, syn_id = id)
 
-    folder_name <- pluck(item, 1, 1)
-    specimenID <- basename(folder_name)
-
-    # Find the file that ends in .gz, not .gz.tbi
-    vcf_filenames <- sapply(item[[3]], "[[", 1)
-    ind <- which(grepl("gz$", vcf_filenames))
-    return(data.frame(study = folder$name,
-                      specimenID = specimenID,
-                      filename = vcf_filenames[ind],
-                      syn_id = pluck(item, 3, ind, 2)))
-  })
-
-  samples_df <- do.call(rbind, samples_df)
   return(samples_df)
 })
 

@@ -1,4 +1,7 @@
-# This script updates the RSEM output file names on Synapse and adds provenance.
+# This script updates the RSEM output file names on Synapse and adds provenance
+# for files in Staging/ only. Files in Data/ have already been renamed and
+# released to the AD Knowledge Portal.
+#
 # The counts files for every study are by default named
 # "rsem.merged.<count_type>.tsv", which could cause confusion or accidental
 # over-writes when downloading the data. Here we replace "rsem.merged" in each
@@ -9,27 +12,29 @@
 #   1. Step 03 has been run in the same directory so that provenance files exist
 #      in the "output/provenance_manifests" directory.
 #   2. The NextFlow config and samplesheet files contain the study name in the
-#      filename exactly as specified in the Model_AD_SynID_list.csv file
-#   3. The RSEM counts files all exist in a folder under syn51132850, and that
+#      filename exactly as specified in the `studies` field of the config.yml file
+#   3. The RSEM counts files all exist in a folder under syn75315763, and that
 #      folder is named with the study exactly as specified in the syn ID list
-#      file.
+#      file. This should be handled automatically by running Step 01 to
+#      create the folder in the appropriate place.
 
 library(synapser)
 library(synapserutils)
 library(stringr)
 
-# TODO eventually maybe most of this string matching can be done with annotations
+source("util_functions.R")
 
-folder_syn_ids <- config::get("folder_syn_ids", config = "default")
+staging_syn_ids <- config::get("staging_syn_ids")
+studies <- config::get("studies")
 
 synLogin(silent = TRUE)
 
 provenance_dir <- file.path("output", "provenance_manifests")
-syn_id_list <- read.csv(file.path("data", "Model_AD_SynID_list.csv"),
-                        comment.char = "#")
 
-# Get all the folders of counts files that exist on Synapse
-study_folders <- synGetChildren(folder_syn_ids$raw_counts,
+# Get all the folders of counts files that exist in the staging folder. We do
+# not re-name or set provenance on any data that has already been released to
+# the AD Knowledge Portal.
+study_folders <- synGetChildren(staging_syn_ids$raw_gene_counts,
                                 includeTypes = list("folder"))$asList()
 study_names <- sapply(study_folders, "[[", "name")
 
@@ -40,21 +45,23 @@ study_names <- sapply(study_folders, "[[", "name")
 
 # Print a warning if there are folders on Synapse that don't correspond to the
 # studies in the syn ID list file.
-if (any(!(study_names %in% syn_id_list$Study))) {
-  missing <- setdiff(study_names, syn_id_list$Study)
+if (any(!(study_names %in% studies))) {
+  missing <- setdiff(study_names, studies)
   msg <- paste0("Synapse folder(s) found for studies that do not exist in ",
-                "Model_AD_SynID_list.csv: \n",
+                "config.yml: \n",
                 paste(missing, collapse = ", "),
                 "\nThese studies will be ignored.")
   message(msg)
 
-  study_folders <- study_folders[study_names %in% syn_id_list$Study]
+  study_folders <- study_folders[study_names %in% studies]
   study_names <- sapply(study_folders, "[[", "name")
 }
 
-# Get NextFlow configuration files and samplesheet files
-nf_config_files <- synGetChildren(folder_syn_ids$nf_configs)$asList()
-nf_samplesheet_files <- synGetChildren(folder_syn_ids$nf_samplesheets)$asList()
+# Get NextFlow configuration files and samplesheet files. Account for the case
+# where configuration or sample sheets might have already been released into
+# Data/.
+nf_config_files <- syn_get_unique_children("nf_configuration") #synGetChildren(staging_syn_ids$nf_configuration)$asList()
+nf_samplesheet_files <- syn_get_unique_children("nf_samplesheets") #synGetChildren(staging_syn_ids$nf_samplesheets)$asList()
 
 nf_config_names <- sapply(nf_config_files, "[[", "name")
 nf_samplesheet_names <- sapply(nf_samplesheet_files, "[[", "name")
@@ -67,10 +74,9 @@ for (folder in study_folders) {
   print(study)
 
   # Get all files in the study folder. The only files in there should be RSEM
-  # output files. This will skip folders (like the quality control folder).
+  # output files.
   syn_files <- synGetChildren(folder$id,
-                              includeTypes = list("file"))
-  syn_files <- syn_files$asList()
+                              includeTypes = list("file"))$asList()
 
 
   ## Rename each file and add provenance ---------------------------------------
@@ -126,10 +132,6 @@ for (folder in study_folders) {
     nf_config <- nf_config_files[[config_match]]
     nf_samplesheet <- nf_samplesheet_files[[samplesheet_match]]
 
-    # the "versionNumber" column is called "currentVersion" in the CSV file due
-    # to it being named that way in the synTableQuery in Step 02. The column
-    # will stay named "currentVersion" despite using $versionNumber in the two
-    # new rows.
     provenance <- rbind(
       c(nf_config$id, nf_config$versionNumber, nf_config$name),
       c(nf_samplesheet$id, nf_samplesheet$versionNumber, nf_samplesheet$name),
@@ -137,7 +139,7 @@ for (folder in study_folders) {
     )
 
     act <- Activity(used = paste(provenance$id,
-                                 provenance$currentVersion,
+                                 provenance$versionNumber,
                                  sep = "."))
     synSetProvenance(sf$id, act)
   }
