@@ -17,12 +17,9 @@
 #   UCI_PrimaryScreen
 #   UCI_Trem2_Cuprizone
 #
-# The CSV file "Model_AD_SynID_list.csv" was created by hand and lists the
-# Synapse IDs of all metadata files and the Synapse IDs of the folders containing
-# fastq files. To add a new study to this process, a row needs to be added for
-# that study in this CSV file, "02_Harmonize_Metadata.R" needs to be re-run to
-# incorporate the metadata for that new study, and any special handling of fastq
-# filenames needs to be added below.
+# To add a new study, make sure steps 01 and 02 have been run for the new study,
+# and ensure that the study name is in the `studies` field of the `config.yml`
+# file. Add any special handling of fastq filenames for the new study below.
 #
 # After running this script, sample sheets were uploaded to Sage's Nextflow
 # Tower environment, and the nf-synapse pipeline was run to download all of the

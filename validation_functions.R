@@ -82,7 +82,10 @@ validate_5x <- function(metadata, geno_calls, counts, symbol_map,
     metadata, geno_calls,
     genotype_pattern = genotype_pattern,
     gene_symbol_match = c("APP", "PSEN1"),
-    total_positions = 6
+    # There are 6 positions, but sometimes one of the PSEN1 positions has
+    # low-quality detection. We allow samples with at least 5 of the 6 variants
+    # to pass.
+    total_positions = 5
   ) |>
     mutate(
       valid_5x_variant = (is_carrier & est_genotype == "carrier") |
@@ -207,8 +210,24 @@ validate_Abi3 <- function(metadata, geno_calls,
 }
 
 
-validate_Bin1 <- function() {
- # TODO
+validate_Bin1 <- function(metadata, geno_calls, counts, symbol_map,
+                          genotype_pattern = "Bin1-K358R_homozygous") {
+  valid_variants <- get_variant_mismatches(
+    metadata, geno_calls,
+    genotype_pattern = genotype_pattern,
+    mutation_match = "Bin1-K358R",
+    total_positions = 3
+  ) |>
+    mutate(
+      valid = (is_carrier & est_genotype == "carrier") |
+        (!is_carrier & est_genotype != "carrier")
+    )
+
+  var_mismatches <- subset(valid_variants, !valid)
+  print_variant_mismatches(var_mismatches, "UCI_Bin1K358R")
+
+  return(list(valid = select(valid_variants, unique_specimenID, valid),
+              detail = valid_variants))
 }
 
 

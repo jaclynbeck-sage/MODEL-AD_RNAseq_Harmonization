@@ -37,10 +37,12 @@ make_counts_df <- function(metadata, counts, symbol_map, genes) {
 
 
 score_quality <- function(quality) {
-  ifelse(is.na(quality), "deletion",
-         ifelse(quality < 20, "low",
-                ifelse(quality < 100, "moderate",
-                       "high")))
+  case_when(
+    is.na(quality) ~ "deletion",
+    quality < 20 ~ "low",
+    quality >= 20 & quality < 100 ~ "moderate",
+    quality >= 100 ~ "high"
+  )
 }
 
 
@@ -59,7 +61,7 @@ get_variant_mismatches <- function(metadata, geno_info, genotype_pattern,
                        (gene_symbol %in% gene_symbol_match |
                           mutation %in% mutation_match)) |>
     group_by(study, unique_specimenID, specimenID, genotype, gene_symbol) |>
-    summarize(count = n(),
+    summarize(count = sum(evidence != "low"),
               avg_quality = mean(quality, na.rm = TRUE),
               .groups = "drop") |>
     mutate(evidence = score_quality(avg_quality),
@@ -440,6 +442,7 @@ meta_abca7 <- subset(metadata_all, study == "UCI_ABCA7")
 valid_5x <- validate_5x(meta_abca7, geno_info, counts, symbol_map)
 valid_abca7 <- validate_Abca7(meta_abca7, geno_info)
 
+# No mismatches in this data set
 valid_all <- merge(valid_5x$valid, valid_abca7$valid, by = "unique_specimenID") |>
   mutate(valid = valid.x & valid.y) |>
   select(unique_specimenID, valid)
@@ -454,8 +457,23 @@ meta_clu <- subset(metadata_all, study == "UCI_Clu-h2kbKI")
 valid_5x <- validate_5x(meta_clu, geno_info, counts, symbol_map)
 valid_clu <- validate_CLU_KI(meta_clu, counts, symbol_map)
 
-# There aren't currently any mismatches in this data set
+# No mismatches in this data set
 valid_all <- merge(valid_5x$valid, valid_clu$valid, by = "unique_specimenID") |>
+  mutate(valid = valid.x & valid.y) |>
+  select(unique_specimenID, valid)
+
+valid_samples <- rbind(valid_samples, valid_all)
+
+
+## UCI_Bin1K358R ---------------------------------------------------------------
+
+meta_bin1 <- subset(metadata_all, study == "UCI_Bin1K358R")
+
+valid_5x <- validate_5x(meta_bin1, geno_info, counts, symbol_map)
+valid_bin1 <- validate_Bin1(meta_bin1, geno_info, counts, symbol_map)
+
+# No mismatches in this data set
+valid_all <- merge(valid_5x$valid, valid_bin1$valid, by = "unique_specimenID") |>
   mutate(valid = valid.x & valid.y) |>
   select(unique_specimenID, valid)
 
