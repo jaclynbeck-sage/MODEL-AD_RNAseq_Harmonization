@@ -46,75 +46,122 @@ create_folder <- function(folder_name, parent_id) {
 
 ## Mirror helper function ------------------------------------------------------
 
-# This is significantly faster than using synapserutils::walk() because we skip
-# any folders that are named after studies and their subfolders, and don't need
-# to parse through the structure that is returned by walk().
-mirror <- function(item, staging_parent_id, folder_path) {
-  children <- synGetChildren(item, includeTypes = list("folder")) |>
+# This is a recursive function that moves through the sub-folders of Data/ on
+# Synapse and creates folders with identical name and structure in Staging/.
+# Along the way, it creates data frames with information about each folder it
+# creates, and binds them all together at the end.
+#
+# This is significantly faster than using synapserutils::walk() or
+# synapserutils::copy() because we skip any folders that are named after studies
+# (and their subfolders) and don't need to filter them out / delete them on
+# Synapse afterward.
+#
+# To make the code clearer, variable names for folders that exist in "Data" have
+# `data_` in front, while those that exist in "Staging" have `staging_`.
+#
+# Arguments:
+#   data_folder - a synapser Folder object
+#   staging_parent_id - a string, the parent folder in Staging that should
+#     mirror the structure of `data_folder` in Data
+#   staging_folder_path - a filepath-like string used strictly for printing,
+#     which gives the location of `staging_parent_id` relative to "Staging/" on
+#     Synapse
+#
+# Returns:
+#   a data frame with info about each folder we created in Staging/ and its
+#   corresponding folder in Data/
+mirror <- function(data_folder, staging_parent_id, staging_folder_path) {
+  data_subfolders <- synGetChildren(data_folder, includeTypes = list("folder")) |>
     as.list()
 
   # If no folders exist inside this one, return. If any of the child folders are
   # named after studies, we've reached the lowest level we want to mirror in
   # this folder. Don't mirror the study folders, instead just return. We also
   # don't want to mirror any folders in `Custom Genome Benchmarking/Raw Counts`.
-  if (length(children) == 0 ||
-      any(sapply(children, "[[", "name") %in% study_list) ||
-      grepl("Custom Genome Benchmarking\\/Raw Counts", folder_path)) {
+  if (length(data_subfolders) == 0 ||
+      any(sapply(data_subfolders, "[[", "name") %in% study_list) ||
+      grepl("Custom Genome Benchmarking\\/Raw Counts", staging_folder_path)) {
     return(NULL)
   }
 
-  # Otherwise, continue mirroring
-  sub_folders <- lapply(children, function(child) {
-    new_folder <- create_folder(child$name, staging_parent_id)
-    new_path <- paste(folder_path, new_folder$name, sep = "/")
+  # Otherwise, continue mirroring the sub-folders
+  staging_subfolders <- lapply(data_subfolders, function(data_child) {
+
+    # New folder in Staging with the same name as `data_child`
+    staging_new_folder <- create_folder(data_child$name, staging_parent_id)
+    staging_new_path <- paste(staging_folder_path, staging_new_folder$name, sep = "/")
+
+    staging_folder_df <- data.frame(name = staging_new_folder$name,
+                                    id = staging_new_folder$id,
+                                    parent = staging_new_folder$parentId,
+                                    path = staging_new_path,
+                                    # Save the original ID too
+                                    released_id = data_child$id)
 
     # printing
-    spaces <- rep(" ", 4*str_count(folder_path, "/")) |> paste(collapse = "")
-    print(str_glue("{spaces}|-- {new_folder$id}: {new_path}"))
+    spaces <- rep(" ", 4*str_count(staging_folder_path, "/")) |> paste(collapse = "")
+    print(str_glue("{spaces}|-- {staging_new_folder$id}: {staging_new_path}"))
 
-    # Mirror children
-    new_children <- mirror(child,
-                           staging_parent_id = new_folder$id,
-                           folder_path = new_path)
+    # Recursively mirror this sub-folder's children, if they exist
+    new_children <- mirror(data_child,
+                           staging_parent_id = staging_new_folder$id,
+                           staging_folder_path = staging_new_path)
 
-    new_folder_df <- data.frame(name = new_folder$name,
-                                id = new_folder$id,
-                                parent = new_folder$parentId,
-                                path = new_path,
-                                # Save the original ID too
-                                released_id = child$id)
-
-    return(rbind(new_folder_df, new_children))
+    return(rbind(staging_folder_df, new_children))
   })
 
-  return(do.call(rbind, sub_folders))
+  return(do.call(rbind, staging_subfolders))
 }
+
 
 ## Mirror the folders ----------------------------------------------------------
 
-top_level_folder <- synGet(top_level_syn_ids$released_data)
-all_folders <- mirror(top_level_folder, top_level_syn_ids$staging, "Staging")
+data_folder <- synGet(top_level_syn_ids$released_data)
+all_folders <- mirror(data_folder, top_level_syn_ids$staging, "Staging")
 
 # Remove genome benchmarking subfolders, add a config-friendly name, add the
 # path to the released data, edit some of the config names
-all_folders <- subset(all_folders, !grepl("Custom Genome Benchmarking\\/", path)) |>
-  mutate(config_name = str_replace_all(name, " \\(.*\\)", "") |>
+all_folders <- subset(all_folders,
+                      !grepl("Custom Genome Benchmarking\\/", path)) |>
+  mutate(
+    # Remove anything between parentheses, lower-case, and replace spaces with
+    # underscores
+    config_name = str_replace_all(name, " \\(.*\\)", "") |>
            tolower() |>
            str_replace_all(" ", "_"),
-         config_name = case_match(
-           config_name,
-           "differential_expression_analysis" ~ "de_analysis",
-           "nextflow_pipeline_input" ~ "nf_pipeline_input",
-           "configuration" ~ "nf_configuration",
-           "sample_sheets" ~ "nf_samplesheets",
-           .default = config_name
-         ),
-         released_path = str_replace(path, "Staging", "Data"))
+    # Shorten some of the names and add nf_ in front of Nextflow fields for clarity
+    config_name = case_match(
+      config_name,
+      "differential_expression_analysis" ~ "de_analysis",
+      "nextflow_pipeline_input" ~ "nf_pipeline_input",
+      "configuration" ~ "nf_configuration",
+      "sample_sheets" ~ "nf_samplesheets",
+      .default = config_name
+    ),
+    # Path in released Data/ folder is a straight replacement of Staging => Data
+    # in all the file paths
+    released_path = str_replace(path, "Staging", "Data")
+  )
 
-# Write to a config file. We want to include comments so we write manually
+# Write to a config file. We want to include comments, so we write manually
 # instead of using write_yaml. Not all the folders listed are used in the
 # pipeline but it's simpler to write everything instead of manually creating a
 # list.
+# File structure is as follows:
+# ```
+# # Auto-generated file
+# default:
+#
+#   # IDs for staging folders (upload or download)
+#   staging_syn_ids:
+#     <name>: "<id>"  # <path>
+#     ...
+#
+#   # IDs for released data folders (download only)
+#   released_data_syn_ids:
+#     <name>: "<id>"  # <path>
+#     ...
+# ```
 staging <- sapply(1:nrow(all_folders), function(N) {
   row <- all_folders[N, ]
   str_glue("    {row$config_name}: \"{row$id}\" \t# {row$path}")
@@ -139,7 +186,7 @@ close(cfg_file)
 
 # Add sub-folders for each study where needed ----------------------------------
 
-# The new IDs should get auto-pulled into the main config now
+# The new IDs should be auto-pulled into the main config now
 staging_ids <- config::get("staging_syn_ids")
 
 for (study_name in studies_to_add) {
