@@ -350,8 +350,6 @@ A LOAD mutation in the mouse *Bin1* gene. Changes AA 537 of the *Bin1-201* trans
 
 **Model development:** <https://www.synapse.org/Synapse:syn25474068>
 
-> This interval has not been tested yet.
-
 ------------------------------------------------------------------------
 
 ### Il1rap-ex3-KO

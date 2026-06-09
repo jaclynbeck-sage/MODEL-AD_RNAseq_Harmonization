@@ -18,7 +18,7 @@ The general steps are:
 2.  **Seqera:** (4) nf-core/rnaseq pipeline to align fastq files
 3.  **R:** (5) sarek samplesheet creation
 4.  **Seqera:** (6) nf-core/sarek pipeline to infer genotypes of each sample
-5.  **R:** (7) Add provenance to counts files
+5.  **R:** (7) Add provenance to counts files, rename counts files
 6.  **R:** (8) Sample validation =\> (9) differential expression analysis
 
 ------------------------------------------------------------------------
@@ -38,37 +38,41 @@ The general steps are:
 
 ## Adding a new study to the pipeline
 
-The pipeline depends on a config file that lists which studies to use. To add a new study, create a new row in `Model_AD_SynID_list.csv` with the study name and the Synapse IDs of the RNA seq assay metadata, biospecimen metadata, and individual metadata files. Make sure to specify a version for each Synapse ID.
+The pipeline depends on a config file that lists which studies to use. To add a new study, create a new row in `Model_AD_SynID_list.csv` with the study name and the Synapse IDs of the RNA seq assay metadata, biospecimen metadata, and individual metadata files. Make sure to specify a version for each Synapse ID. Then, add the study name to the `studies` field of the `config.yml` file.
 
 The study name must match the value of “study” in the annotations of any of the metadata files, since it is used to query Synapse for files related to the study.
 
 ### Updating the intervals file
 
-The intervals.bed file is used for genotype validation, and has the coordinates of where in a given gene the mutation/variant is expected to be. If the study has a new genotype that isn’t in the existing studies, let Jaclyn know so she can add coordinates for that variant to the intervals file. See also [Editing the intervals bed file](https://sagebionetworks.jira.com/wiki/spaces/MA/pages/4312563765/Sarek+Editing+the+intervals+bed+file?atlOrigin=eyJpIjoiZTMzZDU3ZGY3NjgwNDYxMjkyMjkzNTJhZmM2NjY4ZGMiLCJwIjoiYyJ9){.uri} for more detail on how this is done and what mutations are already covered in the current file.
+The intervals.bed file is used for genotype validation, and has the coordinates of where in a given gene the mutation/variant is expected to be. If the study has a new genotype that isn’t in the existing studies, let Jaclyn know so she can add coordinates for that variant to the intervals file. See also [Editing the intervals bed file](https://github.com/jaclynbeck-sage/MODEL-AD_RNAseq_Harmonization/blob/main/docs/developer_IntervalsBedFile.md){.uri} for more detail on how this is done and what mutations are already covered in the current file.
 
 ------------------------------------------------------------------------
 
 # Pipeline steps 1-3 (R)
 
-The following steps are all in R. Each step will only use the studies listed in `Model_AD_SynID_list.csv`.
+The following steps are all in R. Each step will only use the studies listed in the `studies` field of `config.yml`.
 
 ## Step 1 (Initial Synapse setup)
 
-This step sets up the expected folder structure on Synapse for each study listed in `Model_AD_SynID_list.csv`, which makes it easier to go back and forth between Seqera and R results.
+This step sets up the expected folder heirarchy of the Staging folder on Synapse, which makes it easier to go back and forth between Seqera and R results. Briefly, the script mirrors the folder structure of already-released data (in the project's "Data" folder) into the Staging folder, then adds study folders in the appropriate places for any studies listed in the `studies_to_add` variable at the top of the script.
+
+The script re-generates the `config_project_syn_ids.yml` config file with the IDs it finds in "Data" and the IDs it creates in "Staging". **Non-whitespace updates to this file should be committed to the repository.**
 
 This step only needs to be run **once when you add a new data set** to the pipeline. All existing data sets are already set up.
 
-Running the script extra times will not do anything to existing data on Synapse, so it is harmless to run it more than once.
+Running the script extra times will not do anything to existing data or folders on Synapse, so it is harmless to run it more than once.
 
 > **File:** 01_SYN_CreateFolderStructure.R
 >
 > **Uploads:** None
 >
-> **Edits required if adding new study:** None
+> **Commit:** Any non-whitespace updates to `config_project_syn_ids.yml` to the repository. Recommend cleaning up the alignment of the comments for readability, as in previous versions of the file.
+>
+> **Edits required if adding new study:** Add the new study's name to the `studies_to_add` variable.
 
 ## Step 2 (Metadata harmonization)
 
-This step pulls in all metadata files from all studies listed in `Model_AD_SynID_list.csv`, fixes some values in the older files, and merges all the data together. This script also prints out a warning if any metadata files have newer versions on Synapse than what is in the Synapse ID list.
+This step pulls in all metadata files from all studies listed in the `studies` field in `config.yml`, fixes some values in the older files, and writes the metadata files back out to the project's metadata folder, one file per study. This script also prints out a warning if any metadata files have newer versions on Synapse than what is in the Synapse ID list.
 
 **When adding a new study,** you must check the following columns for consistency:
 
@@ -84,7 +88,7 @@ The older Model-AD studies uploaded metadata before the template was standardize
 
 > **File:** 02_HarmonizeMetadata.R
 >
-> **Uploads:** One metadata per study to [Synapse](https://www.synapse.org/Synapse:syn61850200)
+> **Uploads:** One metadata per study to the staging [Metadata folder](https://www.synapse.org/Synapse:syn75315766) on Synapse. If the output file is identical to already-released metadata from this project, it will not be uploaded to Staging.
 >
 > **Edits required if adding a new study:**
 >
@@ -104,7 +108,7 @@ This script queries the AD Knowledge portal for all the fastq files related to e
 
 > **File:** 03_NF_CreateSampleSheets.R
 >
-> **Uploads:** Created sample sheets are uploaded to the [Sample Sheets](https://www.synapse.org/Synapse:syn62147112) folder on Synapse.
+> **Uploads:** Created sample sheets are uploaded to the [Sample Sheets](https://www.synapse.org/Synapse:syn75315776) folder on Synapse.
 >
 > **Edits required if adding new study:** If there are any issues with fastq file annotations or the query is not returning the right files, add any study-specific fixes in the same section as the other study fixes. Comment thoroughly any changes that are made, and why.
 
@@ -116,25 +120,7 @@ This is the step that aligns the fastq files to the reference genome, and is run
 
 ## Upload the sample sheet(s) to the AWS bucket
 
-You will need to get a SAML response token, as described in [Set up tower credentials](https://sagebionetworks.jira.com/wiki/spaces/MA/pages/edit-v2/4295819317#Set-up-Tower-credentials). As a reminder: Go to JumpCloud, click the `strides-ampad-workflows-towerviewer` tile, and use the SAML response browser plug-in to get the token.
-
-In a console, authenticate with:
-
-```         
-aws-saml --profile ampad
-```
-
-Paste your SAML response token when prompted. Upload the sample sheet:
-
-```         
-aws --profile ampad s3 cp <path_to_local_samplesheet> s3://model-ad-rna-project-tower-bucket/sample_sheets/
-```
-
-Check that it is there:
-
-```         
-aws --profile ampad s3 ls s3://model-ad-rna-project-tower-bucket/sample_sheets/
-```
+In the Seqera Tower “Data Explorer”, find the `s3://model-ad-rna-project-tower-bucket` machine and navigate to `s3://model-ad-rna-project-tower-bucket/sample_sheets/`. Upload study sample sheets there.
 
 ## Upload fastq files to AWS bucket
 
@@ -162,11 +148,11 @@ The `rna_seq` pipeline is set up to use a spot instance, so it may fail and need
 
 ### Tag the successful run
 
-When the run finally succeeds all the way, **tag that run** with “Harmonization” and “Final Data” so we know which one to refer back to. If the pipeline failed and needed to be resumed, tag only the final run that succeeded.
+When the run finally succeeds all the way, **tag that run** with “Final Data” so we know which one to refer back to. If the pipeline failed and needed to be resumed, tag only the final run that succeeded.
 
 ### Save the configuration of the run
 
-After the `rna_seq` pipeline finishes, go to the run's page in Seqera Platform, click on the "Parameters" tab, and download the parameters as a JSON file. Name the file `rnaseq_<study_name>-params.json` and upload it to the [Configuration](https://www.synapse.org/Synapse:syn62147114) folder of the harmonization project on Synapse.
+After the `rna_seq` pipeline finishes, go to the run's page in Seqera Platform, click on the "Parameters" tab, and download the parameters as a JSON file. Name the file `rnaseq_<study_name>-params.json` and upload it to the [Configuration](https://www.synapse.org/Synapse:syn75315775) folder of the harmonization project on Synapse.
 
 ## Upload results to Synapse
 
@@ -176,7 +162,7 @@ You will need to upload 3 different sets of data: RSEM matrices, BAM files, and 
 
 -   `filename_string`: rsem.merged
 
--   `parent_id`: the Synapse ID of the study's folder inside the [raw counts folder](https://www.synapse.org/Synapse:syn51132850). If a folder for the study doesn't already exist, make sure the study is in `Model_AD_SynID_list.csv` and run Step 1 to make the folder.
+-   `parent_id`: the Synapse ID of the study's folder inside the [raw counts folder](https://www.synapse.org/Synapse:syn75315763). If a folder for the study doesn't already exist, make sure the study is in the `studies` list in `config.yml` and run Step 1 to make the folder.
 
 -   `s3_prefix`: \<outdir from rnaseq run\>/star_rsem/
 
@@ -186,15 +172,19 @@ You will need to upload 3 different sets of data: RSEM matrices, BAM files, and 
 
 -   `filename_string`: markdup.sorted.bam
 
--   `parent_id`: the Synapse ID of the study's folder inside the [BAM files folder](https://www.synapse.org/Synapse:syn63856101). If a folder for the study doesn't already exist, make sure the study is in `Model_AD_SynID_list.csv` and run Step 1 to make the folder.
+-   `parent_id`: the Synapse ID of the study's folder inside the [BAM files folder](https://www.synapse.org/Synapse:syn75315761). If a folder for the study doesn't already exist, make sure the study is in the `studies` list in `config.yml` and run Step 1 to make the folder.
 
 -   `s3_prefix`: \<outdir from rna_seq\>/star_rsem/
 
 -   `entry`: synindex
 
+> Delete the entire "samtools_stats" folder from the study's BAM folder on Synapse once the BAM files are done uploading.
+
 **QC files**
 
--   `parent_id`: the Synapse ID of the quality control folder for the study, which should be located inside the study's folder in the [Quality Control](https://www.synapse.org/Synapse:syn74490531) folder. If a folder doesn't exist for the study, make one with the study's name.
+-   `filename_string`: "" (empty quotes, can not be missing)
+
+-   `parent_id`: the Synapse ID of the quality control folder for the study, which should be located inside the [Pipeline Data/Quality Control](https://www.synapse.org/Synapse:syn75315777) folder.
 
 -   `s3_prefix`: \<outdir from rna_seq\>/multiqc/star_rsem/
 
@@ -212,7 +202,7 @@ This step makes sample sheets of BAM files, for the [nf-core/sarek](https://nf-c
 
 > **File:** 05_NF_Create_BAM_Sample_Sheets.R
 >
-> **Uploads:** Created sample sheets are uploaded to the [Sample Sheets](https://www.synapse.org/Synapse:syn62147112) folder on Synapse.
+> **Uploads:** Created sample sheets are uploaded to the [Sample Sheets](https://www.synapse.org/Synapse:syn75315776) folder on Synapse.
 >
 > **Edits required if adding new study:** None
 
@@ -248,7 +238,7 @@ Name the pipeline run `genotype_<study name>` or something else informative. **D
 
 The `genotype_calling` pipeline is set up to use a spot instance, so it may fail and need to be resumed if the spot instance stops.
 
-As in Step 4, tag the final successful run with “Harmonization” and “Final Data”, and save the configuration of the run to the [Configuration](https://www.synapse.org/Synapse:syn62147114) folder. Name the configuration file `genotype_<study_name>-params.json`.
+As in Step 4, tag the final successful run with “Harmonization” and “Final Data”, and save the configuration of the run to the [Configuration](https://www.synapse.org/Synapse:syn75315775) folder. Name the configuration file `genotype_<study_name>-params.json`.
 
 ## Upload results to Synapse
 
@@ -256,7 +246,7 @@ Launch the `synapse_index` pipeline on Seqera Platform with arguments:
 
 -   `filename_string`: bcftools.vcf.gz
 
--   `parent_id`: the Synapse ID of the study’s folder in the [Genotype Validation](https://www.synapse.org/Synapse:syn63913842) folder. If a folder for the study doesn't already exist, make sure the study is in `Model_AD_SynID_list.csv` and run Step 1 to make the folder.
+-   `parent_id`: the Synapse ID of the study’s folder in the [Genotype Validation](https://www.synapse.org/Synapse:syn75315773) folder. If a folder for the study doesn't already exist, make sure the study is in the `studies` list in `config.yml` and run Step 1 to make the folder.
 
 -   `s3_prefix`: \<outdir from genotype_calling\>/variant_calling/bcftools/
 
@@ -266,21 +256,11 @@ Launch the `synapse_index` pipeline on Seqera Platform with arguments:
 
 # Pipeline Step 7 (R)
 
-This step does some cleanup on Synapse files and merge all of the separate counts files into one big file. It also adds each study's name to its individual RSEM counts files, so each set of files has distinct names.
-
-First, this step sets the provenance on the newly-created counts files to point to all the files that were used to generate it. Counts files are renamed in the process. Next, step gathers all the counts files for all the studies in `Model_AD_SynID_list.csv` and concatenates them into a single matrix. It does this for all 4 types of RSEM output.
+This step does some cleanup on the counts files from Step 3, which are now on Synapse. First, this step sets the provenance on the newly-created counts files to point to all the files that were used to generate it. Then, it renames them on Synapse from the default `rsem.merged.*` to `<study_name>.*` to avoid confusion and accidental overwrites when downloading data from multiple studies.
 
 > **File:** 07_SYN_UpdateProvenance.R
 >
-> **Uploads:** 4 files:
->
-> -   [Model-AD_all_studies.gene_counts.tsv](https://www.synapse.org/Synapse:syn62690577)
->
-> -   [Model-AD_all_studies.gene_tpm.tsv](https://www.synapse.org/Synapse:syn62690622)
->
-> -   [Model-AD_all_studies.transcript_counts.tsv](https://www.synapse.org/Synapse:syn62690714)
->
-> -   [Model-AD_all_studies.transcript_tpm.tsv](https://www.synapse.org/Synapse:syn62690807)
+> **Uploads:** None. Edits provenance/names on Synapse.
 >
 > **Edits required if adding new study:** None
 
