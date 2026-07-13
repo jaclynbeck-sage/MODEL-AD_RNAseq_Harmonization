@@ -12,20 +12,20 @@ source("util_functions.R")
 
 # Set up -----------------------------------------------------------------------
 
-file_syn_ids <- config::get("file_syn_ids", config = "default")
-folder_syn_ids <- config::get("folder_syn_ids", config = "default")
-studies <- config::get("studies", config = "default")
+file_syn_ids <- config::get("file_syn_ids")
+folder_syn_ids <- config::get("staging_syn_ids")
+studies <- config::get("studies")
 
 synLogin(silent = TRUE)
 
-github <- paste0(config::get("github_repo_url", config = "default"),
+github <- paste0(config::get("github_repo_url"),
                  "/blob/main/09_DESeq2_Analysis.R")
 tmp_dir <- file.path("output", "tmp")
 
 
 # Load counts and metadata -----------------------------------------------------
 
-meta_list <- get_all_metadata(folder_syn_ids$metadata)
+meta_list <- get_all_metadata()
 meta_provenance <- do.call(rbind, lapply(meta_list, "[[", "provenance"))
 
 meta_list <- meta_list[studies] |>
@@ -36,8 +36,7 @@ symbol_map_file <- synGet(file_syn_ids$symbol_map, downloadLocation = tmp_dir,
 symbol_map <- read.csv(symbol_map_file$path) |>
   arrange(ensembl_gene_id)
 
-counts_list <- get_all_counts_files(folder_syn_ids$raw_counts,
-                                    studies,
+counts_list <- get_all_counts_files(studies,
                                     meta_list,
                                     symbol_map,
                                     count_type = "gene_counts")
@@ -52,8 +51,6 @@ counts_provenance <- do.call(rbind, lapply(counts_list, "[[", "provenance"))
 metadata_all <- do.call(rbind, meta_list) |>
   mutate(
     sex = str_to_title(sex), # Upper-case
-    # Change to "Females" and "Males", plural
-    sex_group = paste0(sex, "s"),
     # Add "months" to the end of each age
     age_group = paste(round(ageDeath), "months"),
     # Title case tissue
@@ -259,7 +256,7 @@ get_all_de_results <- function(metadata, counts, parameters,
       summary(res)
 
       meta_group <- meta_sub[meta_sub$group == group, ] |>
-        select(age_group, sex_group, tissue) |>
+        select(age_group, sex, tissue) |>
         distinct()
 
       if (nrow(meta_group) > 1) {
@@ -276,7 +273,7 @@ get_all_de_results <- function(metadata, counts, parameters,
                case = contr[2],
                control = contr[3],
                age = as.character(meta_group$age_group),
-               sex = as.character(meta_group$sex_group),
+               sex = as.character(meta_group$sex),
                tissue = meta_group$tissue) |>
         dplyr::relocate(ensembl_gene_id, .before = baseMean) |>
         dplyr::select(ensembl_gene_id, log2FoldChange, padj, model, case,
@@ -343,15 +340,8 @@ res_jax5x <- get_all_de_results(
   model_vars = c("genotype")
 )
 
-# Males and females together, separated by ageDeath
-res_jax5x_mf <- get_all_de_results(
-  meta_jax5x, counts, params_jax5x,
-  group_cols = c("age_group"),
-  model_vars = c("genotype", "sex")
-)
-
 jax5x_de_file <- str_glue("output/de_output/{params_jax5x$study}_differential_expression.csv")
-write.csv(rbind(res_jax5x, res_jax5x_mf), jax5x_de_file,
+write.csv(res_jax5x, jax5x_de_file,
           row.names = FALSE, quote = FALSE)
 
 norm_jax5x <- get_norm_counts(meta_jax5x, counts, params_jax5x$model_name)
@@ -402,14 +392,7 @@ res_load1 <- get_all_de_results(
   model_vars = c("genotype", "ageDeath", "sequencingBatch")
 )
 
-# Males and females together, separated by ageDeath
-res_load1_mf <- get_all_de_results(
-  meta_load1, counts, params_load1,
-  group_cols = c("age_group"),
-  model_vars = c("genotype", "sex", "ageDeath", "sequencingBatch")
-)
-
-res_load1_all <- rbind(res_load1, res_load1_mf) |>
+res_load1 <- res_load1 |>
   # Re-name model for certain genotypes to work with the explorer
   mutate(model = case_match(case,
                             "APOE4-KI_WT; Trem2-R47H_homozygous" ~ "Trem2R47H",
@@ -417,7 +400,7 @@ res_load1_all <- rbind(res_load1, res_load1_mf) |>
                             .default = model))
 
 load1_de_file <- str_glue("output/de_output/{params_load1$study}_differential_expression.csv")
-write.csv(res_load1_all, load1_de_file,
+write.csv(res_load1, load1_de_file,
           row.names = FALSE, quote = FALSE)
 
 norm_load1 <- get_norm_counts(meta_load1, counts, params_load1$model_name) |>
@@ -446,9 +429,98 @@ load1_norm_files <- lapply(unique(norm_load1$model), function(model_name) {
 
 # Upload to Synapse
 tmp_folder_ids <- folder_syn_ids
-tmp_folder_ids$norm_counts <- "syn72388361"
+#tmp_folder_ids$norm_counts <- "syn72388361" # TODO
 synapse_upload_de(params_load1$study, provenance_df, tmp_folder_ids,
                   load1_de_file, load1_norm_files)
+
+
+## Jax.IU.Pitt_LOAD2.PrimaryScreen ---------------------------------------------
+
+# This study is actually multiple different models together in one file, so we
+# break the models out here. This study has 7 sequencing batches with the
+# following splits:
+#   21-model-ad-007: LOAD2.Bin1-KI_KI/KI and LOAD2.Bin1-KI_WT/WT, and
+#                    LOAD2.Ptprb-D57N_KI/KI and LOAD2.Ptprb-D57N_WT/WT
+#   22-model-ad-003: LOAD2.Epha1-KI_KI/KI and LOAD2.Epha1-KI_WT/WT, some C57BL6J
+#   22-model-ad-007: LOAD2.Cd2ap_KI/KI and LOAD2.Cd2ap_WT/WT, and
+#                    LOAD2.hTau-H2_homozygous and LOAD2.hTau-H2_WT, some C57BL6J
+#   23-model-ad-001: some LOAD2.IL1rap-Exon3KO_homozygous and LOAD2.IL1rap-Exon3KO_WT, some C57BL6J
+#   23-model-ad-003: some LOAD2, some LOAD2.Adamts4-KO_homozygous,
+#                    some LOAD2.Il34-Y213_homozygous, some LOAD2.Ptk2b-intron5SNP_homozygous,
+#                    some LOAD2.Scimp-upstreamSNP_homozygous
+#   23-model-ad-003-run2: some LOAD2, some LOAD2.Adamts4-KO_homozygous and LOAD2.Adamts4-KO_WT,
+#                    some LOAD2.Il34-Y213_homozygous, some LOAD2.Ptk2b-intron5SNP_homozygous,
+#                    some LOAD2.Scimp-upstreamSNP_homozygous
+#   24-model-ad-003: some LOAD2.IL1rap-Exon3KO_homozygous and LOAD2.IL1rap-Exon3KO_WT
+#
+# Genotype pairings:
+#   LOAD2.Bin1-KI_KI/KI and LOAD2.Bin1-KI_WT/WT
+#     - all in the same batch
+#     - 5-6 KI and 3 WT per group
+#   LOAD2.Ptprb-D57N_KI/KI and LOAD2.Ptprb-D57N_WT/WT
+#     - all in the same batch
+#     - 6 KI and 3 WT per group
+#   LOAD2.Epha1-KI_KI/KI and LOAD2.Epha1-KI_WT/WT
+#     - all in the same batch
+#     - 6 KI and 6 WT per group
+#   LOAD2.Cd2ap_KI/KI and LOAD2.Cd2ap_WT/WT
+#     - all in the same batch
+#     - 6 KI and 3 WT per group
+#   LOAD2.hTau-H2_homozygous and LOAD2.hTau-H2_WT
+#     - all in the same batch
+#     - 6 homozygous and 2-3 WT per group
+#       * 12 month male WT only has 2 samples and will be excluded from analysis.
+#   LOAD2.IL1rap-Exon3KO_homozygous and LOAD2.IL1rap-Exon3KO_WT
+#     - split into two batches:
+#       - all 4 month samples are in one batch, and 12 month samples are split between the two
+#       - sexes and genotypes are split evenly across batches
+#       * 12 month samples will need batch correction
+#     - 4 months: 5-6 homozygous and 3 WT per group
+#     - 12 months: 26 homozygous and 21-23 WT per group
+#       - differences in diet and coming from two centers. This info needs to be added to the metadata file
+#   LOAD2.Adamts4-KO_homozygous and LOAD2.Adamts4-KO_WT (and LOAD2?)
+#     - split into two batches:
+#       * 23-model-ad-003 should be thrown out. There is only 1 sample for each group + genotype in it
+#     - LOAD2.Adamts4-KO_WT only has 2 samples total. Unclear why they are labeled separately from LOAD2
+#       since these should be equivalent
+#     - 4 months: 5 homozygous and 5-6 LOAD2 per group
+#     - 12 month males: 5 homozygous and 6 LOAD2
+#     - 12 month females: 6 homozygous, 2 LOAD2, and 2 LOAD2.Adamts4-KO_WT
+#   LOAD2.Il34-Y213_homozygous and LOAD2
+#     - split into 2 batches, 23-model-ad-003 should be thrown out
+#     - 4 months: 5-6 homozygous and 5-6 LOAD2 per group
+#     - 12 month males: 5 homozygous and 6 LOAD2
+#     - 12 month females: 6 homozygous and 2 LOAD2
+#       * This group should get thrown out
+#   LOAD2.Ptk2b-intron5SNP_homozygous and LOAD2
+#     - split into 2 batches, 23-model-ad-003 should be thrown out
+#     - 4 months: 5-6 homozygous and 5-6 LOAD2 per group
+#     - 12 month males: 4 homozygous and 6 LOAD2
+#     - 12 month females: 4 homozygous and 2 LOAD2
+#       * This group should get thrown out
+#   LOAD2.Scimp-upstreamSNP_homozygous and LOAD2
+#     - split into 2 batches, 23-model-ad-003 should be thrown out
+#     - 4 months: 5-6 homozygous and 5-6 LOAD2 per group
+#     - 12 month males: 6 homozygous and 6 LOAD2
+#     - 12 month females: 6 homozygous and 2 LOAD2
+#       * This group should get thrown out
+#
+# Note: Adamts4, Il34, Ptk2b, and Scimp were all bred at IU, which is why their
+# batches/designs are different
+#
+# Note: real ages vary by up to 3 months, so the numeric age needs to be a
+# covariate in the design for DEseq2.
+
+meta_load2 <- subset(metadata_all, study == "Jax.IU.Pitt_LOAD2.PrimaryScreen") |>
+  mutate(
+    age_group = case_match(
+      age_group,
+      c("5 months", "6 months") ~ "4 months",
+      c("11 months", "13 months", "15 months") ~ "12 months",
+      .default = age_group
+    ),
+    model = str_replace(genotype, "_(homozygous|WT|KI/KI)(/WT)?", "")
+  )
 
 
 ## UCI_3xTg-AD -----------------------------------------------------------------
@@ -467,14 +539,8 @@ res_3x <- get_all_de_results(
   model_vars = c("genotype")
 )
 
-res_3x_mf <- get_all_de_results(
-  metadata_all, counts, params_3x,
-  group_cols = c("age_group"),
-  model_vars = c("genotype", "sex")
-)
-
 de_3x_file <- str_glue("output/de_output/{params_3x$study}_differential_expression.csv")
-write.csv(rbind(res_3x, res_3x_mf), de_3x_file,
+write.csv(res_3x, de_3x_file,
           row.names = FALSE, quote = FALSE)
 
 norm_3x <- get_norm_counts(subset(metadata_all, study == params_3x$study),
@@ -511,14 +577,8 @@ res_5x <- get_all_de_results(
   model_vars = c("genotype")
 )
 
-res_5x_mf <- get_all_de_results(
-  meta_uci5x, counts, params_5x,
-  group_cols = c("tissue", "age_group"),
-  model_vars = c("genotype", "sex")
-)
-
 de_5x_file <- str_glue("output/de_output/{params_5x$study}_differential_expression.csv")
-write.csv(rbind(res_5x, res_5x_mf), de_5x_file,
+write.csv(res_5x, de_5x_file,
           row.names = FALSE, quote = FALSE)
 
 norm_5x <- get_norm_counts(meta_uci5x, counts, params_5x$model_name)
@@ -558,19 +618,13 @@ res_abca7 <- get_all_de_results(
   model_vars = c("genotype")
 )
 
-res_abca7_mf <- get_all_de_results(
-  metadata_all, counts, params_abca7,
-  group_cols = c("age_group"),
-  model_vars = c("genotype", "sex")
-)
-
-res_abca7_all <- rbind(res_abca7, res_abca7_mf) |>
+res_abca7 <- res_abca7 |>
   # Re-name model for certain genotypes to work with the explorer
   mutate(model = ifelse(case == "5XFAD_carrier; Abca7-V1599M_homozygous",
                         "Abca7*V1599M.5xFAD", model))
 
 de_abca7_file <- str_glue("output/de_output/{params_abca7$study}_differential_expression.csv")
-write.csv(res_abca7_all, de_abca7_file,
+write.csv(res_abca7, de_abca7_file,
           row.names = FALSE, quote = FALSE)
 
 norm_abca7 <- get_norm_counts(subset(metadata_all, study == params_abca7$study),
@@ -598,6 +652,168 @@ synapse_upload_de(params_abca7$study, provenance_df, tmp_folder_ids,
                   de_abca7_file, norm_abca7_files)
 
 
+## UCI_Bin1K358R ---------------------------------------------------------------
+
+# This study has some non-ideal batch splits. For each age group, 5XFAD_carrier
+# and 5XFAD_noncarrier are in one rnaBatch, while Bin1-K358R_homozygous and
+# 5XFAD_carrier; Bin1-K358R_homozygous are in another. These are not the pairs
+# of comparisons we want to make for DE, so we can't batch correct for this
+# variable in a fixed-effect model. A mixed-effect model may be more appropriate.
+#
+# Each age group has two `libraryBatch`es, with each genotype split fairly
+# evenly between the two batches. However, means that about half of the batches
+# have < 3 samples per genotype in them. There is also a typo batch with exactly
+# 1 sample (06.0.22) which was probably intended to be "06.01.22". The split
+# between Dec-22 and Nov-22 is suspiciously uneven, with either 1 sample or
+# (N-1) samples in each batch for each genotype. Given all of this, we can not
+# batch correct for this variable.
+#
+# `sequencingBatch` corresponds exactly to age group and can be ignored.
+#
+# Genotype differences (5XFAD_carrier vs 5XFAD_noncarrier) appear to be driving
+# the first two PCAs far more than rnaBatch, however some separation by rnaBatch
+# is visible for some age groups.
+
+# PCAs to look at batch
+meta_bin1 <- subset(metadata_all, study == "UCI_Bin1K358R")
+counts_bin1 <- counts[, meta_bin1$unique_specimenID]
+cpm_bin1 <- sweep(counts_bin1, 2, colSums(counts_bin1), "/") * 1e6
+log_bin1 <- log2(cpm_bin1 + 0.5)
+
+do_plots <- function(pc_df) {
+  plt <- ggplot(pc_df, aes(x = PC1, y = PC2, color = genotype, shape = rnaBatch)) +
+    geom_point() + theme_bw() +
+    facet_wrap(~age_group)
+  print(plt)
+
+  plt <- ggplot(pc_df, aes(x = PC1, y = PC2, color = rnaBatch, shape = genotype)) +
+    geom_point() + theme_bw() +
+    facet_wrap(~age_group)
+  print(plt)
+
+  plt <- ggplot(pc_df, aes(x = PC1, y = PC2, color = genotype)) +
+    geom_point() + theme_bw() +
+    facet_grid(rows = vars(age_group), cols = vars(rnaBatch))
+  print(plt)
+
+  plt <- ggplot(pc_df, aes(x = PC1, y = PC2, color = rnaBatch)) +
+    geom_point() + theme_bw() +
+    facet_grid(rows = vars(age_group), cols = vars(genotype))
+  print(plt)
+}
+
+# All samples together -- primary driver is whether there is a 5X or not
+pc <- prcomp(t(log_bin1))
+pc$x <- merge(pc$x, meta_bin1, by.x = "row.names", by.y = "unique_specimenID")
+
+do_plots(pc$x)
+
+# 4 month age group -- primary driver is whether there is a 5X or not
+pc_age4 <- prcomp(t(log_bin1[, meta_bin1$age_group == "4 months"]))
+pc_age4$x <- merge(pc_age4$x, meta_bin1, by.x = "row.names", by.y = "unique_specimenID")
+
+do_plots(pc_age4$x)
+
+# 12 month age group -- primary driver is whether there is a 5X or not
+pc_age12 <- prcomp(t(log_bin1[, meta_bin1$age_group == "12 months"]))
+pc_age12$x <- merge(pc_age12$x, meta_bin1, by.x = "row.names", by.y = "unique_specimenID")
+
+do_plots(pc_age12$x)
+
+# Bin1 vs WT -- primary driver is age group
+pc_b1 <- prcomp(t(log_bin1[, meta_bin1$genotype %in% c("Bin1-K358R_homozygous", "5XFAD_noncarrier")]))
+pc_b1$x <- merge(pc_b1$x, meta_bin1, by.x = "row.names", by.y = "unique_specimenID")
+
+do_plots(pc_b1$x)
+
+# 5x.Bin1 vs 5x -- primary driver is age group
+pc_b5x <- prcomp(t(log_bin1[, meta_bin1$genotype %in% c("5XFAD_carrier; Bin1-K358R_homozygous", "5XFAD_carrier")]))
+pc_b5x$x <- merge(pc_b5x$x, meta_bin1, by.x = "row.names", by.y = "unique_specimenID")
+
+do_plots(pc_b5x$x)
+
+# Bin1 vs WT 4 months -- no visual difference
+pc_b4 <- prcomp(t(log_bin1[, meta_bin1$age_group == "4 months" &
+                             meta_bin1$genotype %in% c("Bin1-K358R_homozygous", "5XFAD_noncarrier")]))
+pc_b4$x <- merge(pc_b4$x, meta_bin1, by.x = "row.names", by.y = "unique_specimenID")
+
+do_plots(pc_b4$x)
+
+# Bin1 vs WT 12 months -- slight separation by genotype / batch
+pc_b12 <- prcomp(t(log_bin1[, meta_bin1$age_group == "12 months" &
+                             meta_bin1$genotype %in% c("Bin1-K358R_homozygous", "5XFAD_noncarrier")]))
+pc_b12$x <- merge(pc_b12$x, meta_bin1, by.x = "row.names", by.y = "unique_specimenID")
+
+do_plots(pc_b12$x)
+
+# 5x.Bin1 vs 5x 4 months -- no visual difference
+pc_b5x4 <- prcomp(t(log_bin1[, meta_bin1$age_group == "4 months" &
+                              meta_bin1$genotype %in% c("5XFAD_carrier; Bin1-K358R_homozygous", "5XFAD_carrier")]))
+pc_b5x4$x <- merge(pc_b5x4$x, meta_bin1, by.x = "row.names", by.y = "unique_specimenID")
+
+do_plots(pc_b5x4$x)
+
+# 5x.Bin1 vs 5x 12 months -- slight separation by genotype / batch
+pc_b5x12 <- prcomp(t(log_bin1[, meta_bin1$age_group == "12 months" &
+                               meta_bin1$genotype %in% c("5XFAD_carrier; Bin1-K358R_homozygous", "5XFAD_carrier")]))
+pc_b5x12$x <- merge(pc_b5x12$x, meta_bin1, by.x = "row.names", by.y = "unique_specimenID")
+
+do_plots(pc_b5x12$x)
+
+
+params_bin1 <- list(
+  study = "UCI_Bin1K358R",
+  model_name = "Bin1-K358R",
+  ref_genotype = "5XFAD_noncarrier",
+  # We want Bin1-K358R_homozygous vs WT, and Bin1-5xFAD vs 5xFAD for the explorer
+  contrasts = list(c("genotype", "Bin1-K358R_homozygous", "5XFAD_noncarrier"),
+                   c("genotype", "5XFAD_carrier; Bin1-K358R_homozygous", "5XFAD_carrier"))
+)
+
+res_bin1 <- get_all_de_results(
+  metadata_all, counts, params_bin1,
+  group_cols = c("sex", "age_group"),
+  model_vars = c("genotype")
+)
+
+res_bin1_mf <- get_all_de_results(
+  metadata_all, counts, params_bin1,
+  group_cols = c("age_group"),
+  model_vars = c("genotype", "sex")
+)
+
+res_bin1_all <- rbind(res_bin1, res_bin1_mf) |>
+  # Re-name model for certain genotypes to work with the explorer
+  mutate(model = ifelse(case == "5XFAD_carrier; Bin1-K358R_homozygous",
+                        "Bin1-K358R.5xFAD", model))
+
+de_bin1_file <- str_glue("output/de_output/{params_bin1$study}_differential_expression.csv")
+write.csv(res_bin1_all, de_bin1_file,
+          row.names = FALSE, quote = FALSE)
+
+norm_bin1 <- get_norm_counts(subset(metadata_all, study == params_bin1$study),
+                             counts, params_bin1$model_name) |>
+  # Re-name model for certain genotypes to work with the explorer
+  mutate(model = case_match(genotype,
+                            "5XFAD_carrier; Bin1-K358R_homozygous" ~ "Bin1-K358R.5xFAD",
+                            "5XFAD_carrier" ~ "Bin1-K358R.5xFAD",
+                            .default = model))
+
+# Split into one file per "model" for the explorer
+norm_bin1_files <- lapply(unique(norm_bin1$model), function(model_name) {
+  norm_data <- subset(norm_bin1, model == model_name)
+
+  norm_file <- str_glue("output/de_output/UCI_{model_name}_normalized_expression.csv")
+  write.csv(norm_data, norm_file,
+            row.names = FALSE, quote = FALSE)
+  return(norm_file)
+})
+
+# Upload to Synapse
+synapse_upload_de(params_bin1$study, provenance_df, tmp_folder_ids,
+                  de_bin1_file, norm_bin1_files)
+
+
 ## UCI_Clu-h2kbKI --------------------------------------------------------------
 
 # For this study, there are two sequencing batches but they correspond to age
@@ -619,19 +835,13 @@ res_clu <- get_all_de_results(
   model_vars = c("genotype")
 )
 
-res_clu_mf <- get_all_de_results(
-  metadata_all, counts, params_clu,
-  group_cols = c("age_group"),
-  model_vars = c("genotype", "sex")
-)
-
-res_clu_all <- rbind(res_clu, res_clu_mf) |>
+res_clu <- res_clu |>
   # Re-name model for certain genotypes to work with the explorer
   mutate(model = ifelse(case == "5XFAD_carrier; Clu-rs2279590_KI_homozygous",
                         "Clu-h2kbKI.5xFAD", model))
 
 de_clu_file <- str_glue("output/de_output/{params_clu$study}_differential_expression.csv")
-write.csv(res_clu_all, de_clu_file,
+write.csv(res_clu, de_clu_file,
           row.names = FALSE, quote = FALSE)
 
 norm_clu <- get_norm_counts(subset(metadata_all, study == params_clu$study),
@@ -683,19 +893,13 @@ res_trem2nss <- get_all_de_results(
   model_vars = c("genotype")
 )
 
-res_trem2nss_mf <- get_all_de_results(
-  metadata_all, counts, params_trem2nss,
-  group_cols = c("age_group"),
-  model_vars = c("genotype", "sex")
-)
-
-res_trem2nss_all <- rbind(res_trem2nss, res_trem2nss_mf) |>
+res_trem2nss <- res_trem2nss |>
   # Re-name model for certain genotypes to work with the explorer
   mutate(model = ifelse(case == "5XFAD_carrier; Trem2-R47H_NSS_homozygous",
                         "Trem2-R47H_NSS.5xFAD", model))
 
 de_trem2nss_file <- str_glue("output/de_output/{params_trem2nss$study}_differential_expression.csv")
-write.csv(res_trem2nss_all, de_trem2nss_file,
+write.csv(res_trem2nss, de_trem2nss_file,
           row.names = FALSE, quote = FALSE)
 
 norm_trem2nss <- get_norm_counts(subset(metadata_all, study == params_trem2nss$study),

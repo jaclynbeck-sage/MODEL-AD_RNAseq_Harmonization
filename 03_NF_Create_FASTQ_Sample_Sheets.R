@@ -7,12 +7,16 @@
 # The following studies are currently accounted for in this script:
 #   Jax.IU.Pitt_5XFAD
 #   Jax.IU.Pitt_APOE4.Trem2.R47H
+#   Jax.IU.Pitt_LOAD2
 #   Jax.IU.Pitt_LOAD2.PrimaryScreen
 #   UCI_3xTg-AD
 #   UCI_5XFAD
 #   UCI_ABCA7
 #   UCI_Bin1K358R
 #   UCI_Clu-h2kbKI
+#   UCI_Trem2-R47H_NSS
+#
+# Accounted for but unused in further analysis:
 #   UCI_hAbeta_KI
 #   UCI_PrimaryScreen
 #   UCI_Trem2_Cuprizone

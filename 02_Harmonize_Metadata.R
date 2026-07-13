@@ -7,16 +7,19 @@
 # The following studies are currently accounted for in this script:
 #   Jax.IU.Pitt_5XFAD
 #   Jax.IU.Pitt_APOE4.Trem2.R47H
+#   Jax.IU.Pitt_LOAD2
 #   Jax.IU.Pitt_LOAD2.PrimaryScreen
 #   UCI_3xTg-AD
 #   UCI_5XFAD
 #   UCI_ABCA7
 #   UCI_Bin1K358R
 #   UCI_Clu-h2kbKI
+#   UCI_Trem2-R47H_NSS
+#
+# Accounted for but unused in further analysis:
 #   UCI_hAbeta_KI
 #   UCI_PrimaryScreen
 #   UCI_Trem2_Cuprizone
-#   UCI_Trem2-R47H_NSS
 #
 # The CSV file "Model_AD_SynID_list.csv" was created by hand and lists the
 # Synapse IDs of all metadata files, some of which do not currently exist on the
@@ -113,8 +116,8 @@ metadata <- lapply(1:nrow(metadata_list), function(N) {
     biospec_df$samplingAge <- NA
   }
 
-  # Studies Jax.IU.Pitt_5XFAD, Jax.IU.Pitt_APOE4.Trem2.R47H, UCI_3xTg-AD,
-  # UCI_ABCA7, UCI_Bin1K358R, UCI_Clu-h2kbKI, UCI_PrimaryScreen,
+  # Studies Jax.IU.Pitt_5XFAD, Jax.IU.Pitt_APOE4.Trem2.R47H, Jax.IU.Pitt_LOAD2,
+  # UCI_3xTg-AD, UCI_ABCA7, UCI_Bin1K358R, UCI_Clu-h2kbKI, UCI_PrimaryScreen,
   # UCI_Trem2_Cuprizone, and UCI_Trem2-R47H_NSS need no specialized corrections
   # in this section
 
@@ -150,6 +153,9 @@ metadata <- lapply(1:nrow(metadata_list), function(N) {
     merge(individual_df, all = FALSE)
 
   combined_df$study <- row$Study
+
+  stopifnot(nrow(combined_df) == nrow(assay_df))
+  stopifnot(!any(duplicated(combined_df$specimenID)))
 
 
   ## Fix some specimenIDs post-merge -------------------------------------------
@@ -195,9 +201,11 @@ geno_map <- c(
   "3xTg-AD_homozygous" = "3xTg-AD_carrier",
   "3XTg-AD_noncarrier" = "3xTg-AD_noncarrier",
   "5XFAD_hemizygous" = "5XFAD_carrier",
+  "APOE_" = "APOE4-KI_",
   "BIN1" = "Bin1",
   "Homozygous" = "homozygous",
   "Heterozygous" = "heterozygous",
+  "TREM2_" = "Trem2-R47H_",
   "NA_Inconclusive" = NA,
   # Not relevant to set of studies used for analysis but saving for
   # reproducibility.
@@ -234,6 +242,7 @@ metadata_combined <- metadata_combined |>
   mutate(genotypeBackground = case_match(
     genotypeBackground,
     c("B6", "C57BL6J")  ~ "C57BL/6J",
+    "C57BL/6J, LOAD1" ~ "C57BL/6J; LOAD1",
     .default = genotypeBackground
   ))
 

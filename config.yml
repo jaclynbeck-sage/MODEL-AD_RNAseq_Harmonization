@@ -9,14 +9,15 @@ default:
   studies: [
     "Jax.IU.Pitt_5XFAD",
     "Jax.IU.Pitt_APOE4.Trem2.R47H",
+    "Jax.IU.Pitt_LOAD2",
+    "Jax.IU.Pitt_LOAD2.PrimaryScreen",
     "UCI_3xTg-AD",
     "UCI_5XFAD",
     "UCI_ABCA7",
-    "UCI_Trem2-R47H_NSS",
-    "UCI_Clu-h2kbKI",
     "UCI_Bin1K358R",
-    "Jax.IU.Pitt_LOAD2.PrimaryScreen"
-    ]
+    "UCI_Clu-h2kbKI",
+    "UCI_Trem2-R47H_NSS"
+  ]
 
   # Synapse IDs that never change
   top_level_syn_ids:
