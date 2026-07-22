@@ -19,7 +19,7 @@ studies <- config::get("studies")
 synLogin(silent = TRUE)
 
 github <- paste0(config::get("github_repo_url"),
-                 "/blob/main/09_DESeq2_Analysis.R")
+                 "/blob/main/10_DESeq2_Analysis.R")
 tmp_dir <- file.path("output", "tmp")
 
 

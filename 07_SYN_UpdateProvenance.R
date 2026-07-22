@@ -60,8 +60,8 @@ if (any(!(study_names %in% studies))) {
 # Get NextFlow configuration files and samplesheet files. Account for the case
 # where configuration or sample sheets might have already been released into
 # Data/.
-nf_config_files <- syn_get_unique_children("nf_configuration") #synGetChildren(staging_syn_ids$nf_configuration)$asList()
-nf_samplesheet_files <- syn_get_unique_children("nf_samplesheets") #synGetChildren(staging_syn_ids$nf_samplesheets)$asList()
+nf_config_files <- syn_get_unique_children("nf_configuration")
+nf_samplesheet_files <- syn_get_unique_children("nf_samplesheets")
 
 nf_config_names <- sapply(nf_config_files, "[[", "name")
 nf_samplesheet_names <- sapply(nf_samplesheet_files, "[[", "name")
@@ -112,9 +112,9 @@ for (folder in study_folders) {
       next
     }
 
-    config_match <- which(grepl(paste0("rnaseq_", study),
+    config_match <- which(grepl(paste0("rnaseq_", study, "-"),
                                 nf_config_names))
-    samplesheet_match <- which(grepl(paste0(study, ".*_rnaseq"),
+    samplesheet_match <- which(grepl(paste0(study, "_.*_rnaseq"),
                                      nf_samplesheet_names))
 
     if (length(config_match) == 0 || length(samplesheet_match) == 0) {

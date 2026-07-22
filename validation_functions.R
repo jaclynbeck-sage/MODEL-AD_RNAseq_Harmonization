@@ -137,26 +137,30 @@ validate_5x <- function(metadata, geno_calls, counts, symbol_map,
 
 validate_APOE4_KI <- function(metadata, counts, symbol_map,
                               genotype_pattern = "APOE4-KI_(homo|hetero)") {
-  counts_df <- make_counts_df(metadata, counts, symbol_map, "APOE") %>%
-    # We need to use > 2 CPM as a threshold for this genotype: there are a few
-    # non-carrier samples with > 1 but < 2 CPM expression that seem to match other
-    # non-carriers and clearly don't match carriers in expression of mouse APOE,
-    # so these are probably true non-carriers.
-    mutate(expr_apoe = APOE > 2)
+  counts_df <- make_counts_df(metadata, counts, symbol_map, "APOE") |>
+    mutate(apoe_geno = grepl(genotype_pattern, genotype))
 
+  # We need to use two different thresholds for this genotype:
+  #   1. There is one LOAD2 sample that expresses 13 CPM of APOE and is a clear
+  #      outlier compared to APOE expression of other carriers, so we set a
+  #      threshold of 20 for positive expression of APOE.
+  #   2. There are a few non-carrier samples with > 1 but < 2 CPM expression
+  #      that seem to match other non-carriers and clearly don't match carriers
+  #      in expression of mouse APOE, so these are probably true non-carriers.
+  #      However, there are also some non-carriers in the two LOAD2 studies that
+  #      express APOE at 7-20 CPM but express mouse Apoe at the same level as
+  #      other non-carriers. Three of these are also ambiguous sex mismatches,
+  #      so it's unclear whether these samples are contaminated or not. To be
+  #      cautious, we set a stricter limit for non-carriers.
   valid_expression <- subset(counts_df,
-                             (grepl(genotype_pattern, genotype) & expr_apoe) |
-                               (!grepl(genotype_pattern, genotype) & !expr_apoe))
+                             (apoe_geno & APOE > 20) |
+                               (!apoe_geno & APOE < 2))
 
   count_mismatches <- subset(counts_df,
                              !(unique_specimenID %in% valid_expression$unique_specimenID)) |>
-    select(study, specimenID, unique_specimenID, genotype, expr_apoe, APOE)
+    select(study, specimenID, unique_specimenID, genotype, APOE)
 
   print_expression_mismatches(count_mismatches, "APOE4-KI")
-
-  # TODO 3 of the 4 WT samples that fail from the LOAD2 study express APOE at ~20
-  # CPM and should probably pass instead. On the other hand, these 3 look like
-  # outliers on a PCA
 
   final <- counts_df |>
     mutate(valid_apoe4_expression = unique_specimenID %in% valid_expression$unique_specimenID,
@@ -262,8 +266,9 @@ validate_hAbeta_KI <- function(metadata, geno_calls,
                                            genotype_pattern = genotype_pattern,
                                            mutation_match = "App-KI",
                                            total_positions = 3) |>
-    mutate(valid = (is_carrier & est_genotype == "carrier")  |
-             (!is_carrier & est_genotype != "carrier"))
+    mutate(valid_hAbeta_variant = (is_carrier & est_genotype == "carrier")  |
+             (!is_carrier & est_genotype != "carrier"),
+           valid = valid_hAbeta_variant)
 
   var_mismatches <- subset(valid_variants, !valid)
   print_variant_mismatches(var_mismatches, "hAbeta-KI")
@@ -271,7 +276,7 @@ validate_hAbeta_KI <- function(metadata, geno_calls,
   # There is no noticeable difference in App expression between genotypes, so we
   # do not validate by expression.
   return(list(valid = select(valid_variants, unique_specimenID, valid),
-              detail = valid_variants))
+              detail = select(valid_variants, -valid)))
 }
 
 

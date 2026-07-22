@@ -16,7 +16,7 @@ studies <- config::get("studies")
 synLogin(silent = TRUE)
 
 github <- paste0(config::get("github_repo_url"),
-                 "/blob/main/08_Sample_Validation.R")
+                 "/blob/main/09_Sample_Validation.R")
 tmp_dir <- file.path("output", "tmp")
 
 
@@ -133,39 +133,7 @@ metadata_all <- subset(metadata_all, unique_specimenID %in% colnames(counts)) |>
 counts <- counts[, metadata_all$unique_specimenID]
 
 
-# Find vcf files on Synapse ----------------------------------------------------
-
-# This data has a number of sub-folders and sub-sub-folders, so we use the walk
-# function from synapserutils to get all the files. We use syn_get_unique_children
-# to get all the vcf folders in both Data/ and Staging/.
-
-vcf_folders <- syn_get_unique_children("genotype_validation")
-names(vcf_folders) <- sapply(vcf_folders, "[[", "name")
-
-vcf_folders <- vcf_folders[names(vcf_folders) %in% studies]
-
-cat("Finding VCF files on Synapse...\n")
-study_vcfs <- lapply(vcf_folders, function(folder) {
-  print(folder$name)
-  folder_structure <- synapserutils::walk(folder$id,
-                                          includeTypes = list("file"))$asList()
-
-  samples_df <- syn_walk_to_df(folder_structure) |>
-    # Only keep files that end in .gz, not .gz.tbi
-    subset(type == "file" & grepl("gz$", name)) |>
-    mutate(study = folder$name,
-           # Specimen ID is the name of the containing folder
-           specimenID = basename(dirname(path))) |>
-    select(name, id, specimenID, study) |>
-    dplyr::rename(filename = name, syn_id = id)
-
-  return(samples_df)
-})
-
-study_vcfs <- study_vcfs[lengths(study_vcfs) > 0]
-
-
-# Download and parse vcf files -------------------------------------------------
+# Load intervals file ----------------------------------------------------------
 
 # Read the intervals file used to call variants and turn it into one row per
 # genome position rather than one row per range of positions.
@@ -187,40 +155,23 @@ intervals <- read.delim(intervals_file$path, header = FALSE) |>
           mutation = mutation,
           position = (start+1):(end-1))
 
-cat("Reading VCF files...\n")
-geno_info <- lapply(study_vcfs, function(study_df) {
-  print(unique(study_df$study))
+# Load VCF files ---------------------------------------------------------------
 
-  mutation_df <- apply(study_df, 1, function(row) {
-    vcf_file <- synGet(
-      row[["syn_id"]],
-      downloadLocation = file.path(tmp_dir, unique(study_df$study)),
-      ifcollision = "overwrite.local"
-    )
+# Find the combined VCF files on Synapse
+vcf_files <- syn_get_unique_children("genotype_validation")
+vcf_files <- vcf_files[grepl("combined_vcf", names(vcf_files))]
 
-    vcf <- NULL
+# Merge with intervals data to get which gene belongs to each position
+geno_info <- lapply(vcf_files, function(study_file) {
+  syn_file <- synGet(study_file$id,
+                     downloadLocation = tmp_dir,
+                     ifcollision = "overwrite.local")
 
-    # If the sample didn't have any detected mutations, the vcf file will
-    # contain only comments and no data, which will cause the read.delim
-    # function to throw an error.
-    try({
-      vcf <- read.delim(gzfile(vcf_file$path), header = FALSE, comment.char = "#") |>
-        dplyr::rename(chromosome = V1, position = V2, ref = V4, alt = V5,
-                      quality = V6) |>
-        select(chromosome, position, ref, alt, quality) |>
-        mutate(study = row[["study"]],
-               specimenID = row[["specimenID"]]) |>
-        merge(intervals)
-    }, silent = TRUE)
-
-    # If no mutations found, this will be NULL
-    return(vcf)
-  })
-
-  mutation_df <- do.call(rbind, mutation_df) |>
+  data <- read.csv(syn_file$path) |>
+    merge(intervals) |>
     mutate(gene_symbol = str_replace(mutation, "[-\\*].*", ""))
 
-  return(mutation_df)
+  return(data)
 })
 
 geno_info <- do.call(rbind, geno_info)
@@ -240,13 +191,14 @@ valid_samples <- data.frame()
 # Validation of mouse sex ------------------------------------------------------
 
 xy_df <- make_counts_df(metadata_all, counts, symbol_map,
-                        c("Xist", "Eif2s3y", "Ddx3y")) |>
+                        c("Xist", "Eif2s3y", "Ddx3y", "Kdm5d")) |>
   # More than 10 CPM for Xist -- there is low-level expression even in males
   mutate(
     # Expression of Y-related genes should be zero for females, so we use
-    # anything > 1 CPM for males and assume < 1 CPM might be noise
-    est_male = (Eif2s3y >= 1 | Ddx3y >= 1) & Xist < 50,
-    est_female = Xist > 10 & (Eif2s3y < 1 | Ddx3y < 1)
+    # anything > 1 CPM for males and assume < 1 CPM might be noise.
+    mean_y = rowMeans(cbind(Eif2s3y, Ddx3y, Kdm5d)),
+    est_male = mean_y >= 1,
+    est_female = Xist > 10 & mean_y < 1
   )
 
 # Mark valid/invalid conditions
@@ -258,15 +210,29 @@ xy_df$valid_sex[xy_df$sex == "male" &
                   xy_df$est_female == FALSE &
                   xy_df$est_male == TRUE] <- TRUE
 
+# Linear scale
+ggplot(xy_df, aes(x = Xist, y = mean_y, color = sex)) +
+  geom_point() +
+  geom_hline(yintercept = 1, linewidth = 0.5, color = "orange") +
+  theme_bw() +
+  facet_wrap(~study)
+
+# Log scale - Adding pseudocount to avoid inf values
+ggplot(xy_df, aes(x = Xist+0.1, y = mean_y+0.1, color = sex)) +
+  geom_point() +
+  geom_hline(yintercept = 1, linewidth = 0.5, color = "orange") +
+  theme_bw() +
+  scale_x_log10() + scale_y_log10() +
+  facet_wrap(~study)
+
 # Mark valid samples in the data frame
 sex_matches <- select(xy_df, unique_specimenID, valid_sex)
-#valid_samples <- merge(valid_samples, sex_matches, all = TRUE)
 
 # For printing
 mismatches <- subset(xy_df, !valid_sex) |>
-  select(study, individualID, specimenID, sex, est_female, est_male, Xist, Eif2s3y, Ddx3y) |>
+  select(study, individualID, specimenID, sex, est_female, est_male, Xist, Eif2s3y, Ddx3y, Kdm5d, mean_y) |>
   dplyr::rename(reported_sex = sex) |>
-  mutate(across(c(Xist, Ddx3y, Eif2s3y), ~ round(.x, 2)))
+  mutate(across(c(Xist, Ddx3y, Eif2s3y, Kdm5d, mean_y), ~ round(.x, 2)))
 
 mismatches$est_sex <- "unknown"
 mismatches$est_sex[mismatches$est_female & !mismatches$est_male] <- "female"
@@ -274,7 +240,18 @@ mismatches$est_sex[mismatches$est_male & !mismatches$est_female] <- "male"
 
 print(paste(nrow(mismatches), "samples have mismatched sex:"))
 print(select(mismatches, study, specimenID, reported_sex, est_sex,
-             Xist, Eif2s3y, Ddx3y))
+             Xist, Eif2s3y, Ddx3y, Kdm5d, mean_y))
+
+# The two Jax.IU.Pitt_LOAD2.PrimaryScreen samples that fail (both female) have a
+# mean_y of 3.64 and 11.06, which is much lower than male samples but higher
+# than all other female samples. These samples also express a small amount of
+# APOE (~20 CPM) but are supposed to be APOE_WT. Combined, this suggests
+# contamination of these samples.
+#
+# The four Jax.IU.Pitt_LOAD2 samples that fail (all female) have mean_y ranging
+# from 1.42 to 8.36 but Xist > 1200. Possibly two of these should pass with < 3
+# CPM mean_y but it's unclear. These samples don't fail expression or variant
+# checks.
 
 # Validation of mouse genotype -------------------------------------------------
 
@@ -314,7 +291,7 @@ for (study_name in unique(meta_5x$study)) {
   print(plt)
 }
 
-# TODO GT19_12887 (non-carrier) from Jax 5X study has all 6 variants detected
+# NOTE: GT19_12887 (non-carrier) from Jax 5X study has all 6 variants detected
 # but expresses only a small amount of APP (11.28 CPM) and PSEN1 (0.85 CPM)
 # and clusters with other non-carriers in a PCA
 
@@ -366,16 +343,69 @@ plt <- ggplot(pc_plot, aes(x = PC1, y = PC2, color = mismatch_type, shape = is_l
 print(plt)
 
 
+## Jax.IU.Pitt_LOAD2 -----------------------------------------------------------
+
+# APOE4 KI can be validated with gene expression only, and Trem2-R47H and APP-KI
+# can be validated with variant calling.
+meta_load2 <- subset(metadata_all, study == "Jax.IU.Pitt_LOAD2")
+
+# TODO there is some ambiguous WT APOE expression
+valid_apoe <- validate_APOE4_KI(meta_load2, counts, symbol_map)
+valid_trem2 <- validate_Trem2_R47H(meta_load2, geno_info)
+valid_hAbeta <- validate_hAbeta_KI(meta_load2, geno_info,
+                                   genotype_pattern = "hAPP-3/3_homo|hetero")
+
+valid_all <- merge(valid_apoe$valid, valid_trem2$valid,
+                   by = "unique_specimenID") |>
+  merge(valid_hAbeta$valid, by = "unique_specimenID") |>
+  mutate(valid = valid.x & valid.y & valid) |>
+  select(unique_specimenID, valid)
+
+valid_samples <- rbind(valid_samples, valid_all)
+
+# Tmp PCA
+
+meta_study <- subset(meta_load2, !is.na(genotype)) |>
+  merge(select(valid_apoe$detail, unique_specimenID, valid_apoe4_expression)) |>
+  merge(select(valid_trem2$detail, unique_specimenID, valid_trem2_r47h_variant)) |>
+  merge(select(valid_hAbeta$detail, unique_specimenID, valid_hAbeta_variant))
+
+counts_load2 <- log2(counts[, meta_study$unique_specimenID] + 0.5)
+
+vars <- matrixStats::rowVars(as.matrix(counts_load2[, meta_study$unique_specimenID]))
+hv <- names(sort(vars, decreasing = TRUE))[1:2000]
+
+pc <- prcomp(t(counts_load2[hv, meta_study$unique_specimenID]))
+
+pc_plot <- merge(pc$x[, c("PC1", "PC2")], meta_study, by.x = "row.names",
+                 by.y = "unique_specimenID") |>
+  dplyr::rename(unique_specimenID = Row.names) |>
+  mutate(
+    has_apoe4 = grepl("APOE4-KI_(homo|hetero)", genotype),
+    mismatch_type = case_when(
+      valid_apoe4_expression & valid_trem2_r47h_variant & valid_hAbeta_variant ~ "none",
+      !valid_apoe4_expression & valid_trem2_r47h_variant & valid_hAbeta_variant ~ "APOE4 expression",
+      valid_apoe4_expression & !valid_trem2_r47h_variant & valid_hAbeta_variant ~ "Trem2-R47H variant",
+      valid_apoe4_expression & valid_trem2_r47h_variant & !valid_hAbeta_variant ~ "hAPP variant",
+      .default = "Multiple mismatches"
+    )
+  )
+
+plt <- ggplot(pc_plot, aes(x = PC1, y = PC2, color = mismatch_type, shape = has_apoe4)) +
+  geom_point() + ggtitle("Jax.IU.Pitt_LOAD2")
+print(plt)
+
+
 ## Jax.IU.Pitt_LOAD2.PrimaryScreen ---------------------------------------------
 
-meta_load2 <- subset(metadata_all, study == "Jax.IU.Pitt_LOAD2.PrimaryScreen")
+meta_load2pri <- subset(metadata_all, study == "Jax.IU.Pitt_LOAD2.PrimaryScreen")
 
 # LOAD2 doesn't follow the same nomenclature as LOAD1 genotypes
-valid_apoe <- validate_APOE4_KI(meta_load2, counts, symbol_map,
+valid_apoe <- validate_APOE4_KI(meta_load2pri, counts, symbol_map,
                                 genotype_pattern = "LOAD2")
-valid_hAbeta <- validate_hAbeta_KI(meta_load2, geno_info,
+valid_hAbeta <- validate_hAbeta_KI(meta_load2pri, geno_info,
                                    genotype_pattern = "LOAD2")
-valid_trem2 <- validate_Trem2_R47H(meta_load2, geno_info,
+valid_trem2 <- validate_Trem2_R47H(meta_load2pri, geno_info,
                                    genotype_pattern = "LOAD2")
 
 valid_all <- valid_apoe$valid |>
@@ -386,18 +416,13 @@ valid_all <- valid_apoe$valid |>
 
 # TODO Il1rap, Il34, Ptprb
 
-# TODO 3 of the 4 WT samples that fail from the LOAD2 study express APOE at ~20
-# CPM and should probably pass instead. On the other hand, these 3 look like
-# outliers on a PCA
-
 # Tmp PCA
 
-meta_study <- subset(meta_load2, !is.na(genotype)) |>
+meta_study <- subset(meta_load2pri, !is.na(genotype)) |>
   merge(valid_apoe$detail) |>
   merge(valid_hAbeta$detail) |>
   merge(valid_trem2$detail,
-        by = c("study", "specimenID", "unique_specimenID", "genotype")) |>
-  dplyr::rename(valid_hAbeta_variant = valid)
+        by = c("study", "specimenID", "unique_specimenID", "genotype"))
 
 counts_load2 <- log2(counts[, meta_study$unique_specimenID] + 0.5)
 
@@ -442,7 +467,7 @@ meta_abca7 <- subset(metadata_all, study == "UCI_ABCA7")
 valid_5x <- validate_5x(meta_abca7, geno_info, counts, symbol_map)
 valid_abca7 <- validate_Abca7(meta_abca7, geno_info)
 
-# No mismatches in this data set
+# TODO check variant mismatch for 11451lh
 valid_all <- merge(valid_5x$valid, valid_abca7$valid, by = "unique_specimenID") |>
   mutate(valid = valid.x & valid.y) |>
   select(unique_specimenID, valid)
@@ -576,21 +601,17 @@ print(subset(valid_samples, !validated))
 write.csv(valid_samples, file.path("output", "Model_AD_valid_samples.csv"),
           row.names = FALSE, quote = FALSE)
 
+jax_studies <- grep("Jax", unique(metadata_all$study), value = TRUE)
 meta_stats <- merge(metadata_all, valid_samples) |>
   # Fix a few age timepoints for Jax studies
   mutate(
-    ageDeath = round(ageDeath),
     ageDeath = case_when(
-      study == "Jax.IU.Pitt_5XFAD" & ageDeath < 6 ~ 4,
-      study == "Jax.IU.Pitt_5XFAD" & ageDeath > 6 & ageDeath < 10 ~ 8,
-      study == "Jax.IU.Pitt_5XFAD" & ageDeath > 10 ~ 12,
-      study == "Jax.IU.Pitt_APOE4.Trem2.R47H" & ageDeath <= 6 ~ 4,
-      study == "Jax.IU.Pitt_APOE4.Trem2.R47H" & ageDeath > 6 & ageDeath <= 10 ~ 8,
-      study == "Jax.IU.Pitt_APOE4.Trem2.R47H" & ageDeath > 10 & ageDeath < 20 ~ 12,
-      study == "Jax.IU.Pitt_APOE4.Trem2.R47H" & ageDeath > 20 ~ 24,
-      study == "Jax.IU.Pitt_LOAD2.PrimaryScreen" & ageDeath < 10 ~ 4,
-      study == "Jax.IU.Pitt_LOAD2.PrimaryScreen" & ageDeath > 10 ~ 12,
-      .default = ageDeath
+      study %in% jax_studies & ageDeath <= 6 ~ 4,
+      study %in% jax_studies & ageDeath > 6 & ageDeath <= 10 ~ 8,
+      study %in% jax_studies & ageDeath > 10 & ageDeath <= 16 ~ 12,
+      study %in% jax_studies & ageDeath > 16 & ageDeath <= 20 ~ 18,
+      study %in% jax_studies & ageDeath > 20 ~ 24,
+      .default = round(ageDeath)
     )
   ) |>
   dplyr::rename(age = ageDeath)
