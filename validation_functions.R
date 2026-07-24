@@ -331,7 +331,7 @@ validate_Trem2_R47H <- function(metadata, geno_calls,
   var_mismatches <- subset(valid_variants, !valid_trem2_r47h_variant)
   print_variant_mismatches(var_mismatches, "Trem2-R47H")
 
-  # There is no clear difference in expression of Trem2 between genotypes in each
+  # There is no clear cutoff in expression of Trem2 between genotypes in each
   # study so we can not validate based on expression.
 
   valid_variants <- mutate(valid_variants, valid = valid_trem2_r47h_variant)

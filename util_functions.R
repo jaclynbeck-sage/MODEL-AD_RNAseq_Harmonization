@@ -270,3 +270,21 @@ syn_walk_to_df <- function(walk_list) {
 
   return(walk_df)
 }
+
+
+bin_jax_ages <- function(metadata) {
+  jax_studies <- grep("Jax", unique(metadata$study), value = TRUE)
+
+  metadata |>
+    mutate(
+      ageDeathNumeric = ageDeath,
+      ageDeath = case_when(
+        study %in% jax_studies & ageDeath <= 6 ~ 4,
+        study %in% jax_studies & ageDeath > 6 & ageDeath <= 10 ~ 8,
+        study %in% jax_studies & ageDeath > 10 & ageDeath <= 16 ~ 12,
+        study %in% jax_studies & ageDeath > 16 & ageDeath <= 20 ~ 18,
+        study %in% jax_studies & ageDeath > 20 ~ 24,
+        .default = round(ageDeath)
+      )
+    )
+}

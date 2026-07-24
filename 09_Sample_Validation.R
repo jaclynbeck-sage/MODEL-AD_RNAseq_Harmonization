@@ -97,14 +97,29 @@ get_variant_mismatches <- function(metadata, geno_info, genotype_pattern,
 }
 
 
+reformat_details <- function(details_df, symbol_map) {
+  details_df <- details_df |>
+    select(study, unique_specimenID, genotype,
+           any_of(c("total_found", symbol_map$gene_symbol)),
+           matches("valid_.*_variant"), matches("valid_.*_expression"))
+
+  if ("total_found" %in% colnames(details_df)) {
+    details_df <- dplyr::rename(details_df, total_variants_found = total_found)
+  }
+
+  return(details_df)
+}
+
+
 # Load counts and metadata -----------------------------------------------------
 
 meta_list <- get_all_metadata()
 meta_list <- meta_list[studies] |>
   lapply("[[", "data")
 
-# Combine into one data frame
-metadata_all <- do.call(rbind, meta_list)
+# Combine into one data frame and bin the continuous ageDeath values in Jax studies
+metadata_all <- do.call(rbind, meta_list) |>
+  bin_jax_ages()
 
 symbol_map_file <- synGet(file_syn_ids$symbol_map,
                           downloadLocation = tmp_dir,
@@ -128,8 +143,7 @@ lib_sizes <- colSums(counts)
 counts <- sweep(counts, 2, lib_sizes, "/") * 1e6
 
 # Not all samples in the metadata file appear in the counts matrix and vice versa
-metadata_all <- subset(metadata_all, unique_specimenID %in% colnames(counts)) |>
-  select(individualID, specimenID, unique_specimenID, sex, genotype, ageDeath, study)
+metadata_all <- subset(metadata_all, unique_specimenID %in% colnames(counts))
 counts <- counts[, metadata_all$unique_specimenID]
 
 
@@ -181,22 +195,24 @@ geno_info <- merge(geno_info, metadata_all) |>
   mutate(evidence = score_quality(quality))
 
 
-# Set up the valid samples data frame ------------------------------------------
+# Set up the valid samples list ------------------------------------------------
 
-#valid_samples <- metadata_all |>
-#  select(individualID, specimenID, unique_specimenID, study)
-valid_samples <- data.frame()
+valid_samples_list <- vector("list", length(unique(metadata_all$study)))
+names(valid_samples_list) <- unique(metadata_all$study)
 
 
 # Validation of mouse sex ------------------------------------------------------
 
 xy_df <- make_counts_df(metadata_all, counts, symbol_map,
                         c("Xist", "Eif2s3y", "Ddx3y", "Kdm5d")) |>
-  # More than 10 CPM for Xist -- there is low-level expression even in males
+  # Use a small threshold for Xist for females -- there is one sample that
+  # expresses near-zero counts of both Y-genes and Xist.
   mutate(
+    # Take the geometric mean (log-scale), including a pseudocount
+    mean_y = rowMeans(log(cbind(Eif2s3y, Ddx3y, Kdm5d) + 0.5)),
+    mean_y = exp(mean_y) - 0.5,
     # Expression of Y-related genes should be zero for females, so we use
     # anything > 1 CPM for males and assume < 1 CPM might be noise.
-    mean_y = rowMeans(cbind(Eif2s3y, Ddx3y, Kdm5d)),
     est_male = mean_y >= 1,
     est_female = Xist > 10 & mean_y < 1
   )
@@ -218,11 +234,10 @@ ggplot(xy_df, aes(x = Xist, y = mean_y, color = sex)) +
   facet_wrap(~study)
 
 # Log scale - Adding pseudocount to avoid inf values
-ggplot(xy_df, aes(x = Xist+0.1, y = mean_y+0.1, color = sex)) +
+ggplot(xy_df, aes(x = log2(Xist+0.5), y = log2(mean_y+0.5), color = sex)) +
   geom_point() +
-  geom_hline(yintercept = 1, linewidth = 0.5, color = "orange") +
+  geom_hline(yintercept = log2(1.5), linewidth = 0.5, color = "orange") +
   theme_bw() +
-  scale_x_log10() + scale_y_log10() +
   facet_wrap(~study)
 
 # Mark valid samples in the data frame
@@ -230,7 +245,8 @@ sex_matches <- select(xy_df, unique_specimenID, valid_sex)
 
 # For printing
 mismatches <- subset(xy_df, !valid_sex) |>
-  select(study, individualID, specimenID, sex, est_female, est_male, Xist, Eif2s3y, Ddx3y, Kdm5d, mean_y) |>
+  select(study, individualID, specimenID, sex, est_female, est_male,
+         Xist, Eif2s3y, Ddx3y, Kdm5d, mean_y) |>
   dplyr::rename(reported_sex = sex) |>
   mutate(across(c(Xist, Ddx3y, Eif2s3y, Kdm5d, mean_y), ~ round(.x, 2)))
 
@@ -249,7 +265,7 @@ print(select(mismatches, study, specimenID, reported_sex, est_sex,
 # contamination of these samples.
 #
 # The four Jax.IU.Pitt_LOAD2 samples that fail (all female) have mean_y ranging
-# from 1.42 to 8.36 but Xist > 1200. Possibly two of these should pass with < 3
+# from 1.42 to 8.36 but Xist > 1200. Possibly two of these could pass with < 3
 # CPM mean_y but it's unclear. These samples don't fail expression or variant
 # checks.
 
@@ -262,7 +278,9 @@ meta_5x <- subset(metadata_all,
 
 valid_5x <- validate_5x(meta_5x, geno_info, counts, symbol_map)
 
-valid_samples <- rbind(valid_samples, valid_5x$valid)
+# TODO temporarily duplicated data
+valid_samples_list[["Jax.IU.Pitt_5XFAD"]] <- valid_5x$valid
+valid_samples_list[["UCI_5XFAD"]] <- valid_5x$valid
 
 # Tmp PCA
 
@@ -292,7 +310,7 @@ for (study_name in unique(meta_5x$study)) {
 }
 
 # NOTE: GT19_12887 (non-carrier) from Jax 5X study has all 6 variants detected
-# but expresses only a small amount of APP (11.28 CPM) and PSEN1 (0.85 CPM)
+# but expresses only a small amount of APP (11.28 CPM) and PSEN1 (0.85 CPM),
 # and clusters with other non-carriers in a PCA
 
 
@@ -310,7 +328,7 @@ valid_all <- merge(valid_apoe$valid, valid_trem2$valid,
   mutate(valid = valid.x & valid.y) |>
   select(unique_specimenID, valid)
 
-valid_samples <- rbind(valid_samples, valid_all)
+valid_samples_list[["Jax.IU.Pitt_APOE4.Trem2.R47H"]] <- valid_all
 
 # Tmp PCA
 
@@ -325,7 +343,7 @@ hv <- names(sort(vars, decreasing = TRUE))[1:2000]
 
 pc <- prcomp(t(counts_apoe[hv, meta_study$unique_specimenID]))
 
-pc_plot <- merge(pc$x[, c("PC1", "PC2")], meta_study, by.x = "row.names",
+pc_plot <- merge(pc$x[, paste0("PC", 1:10)], meta_study, by.x = "row.names",
                  by.y = "unique_specimenID") |>
   dplyr::rename(unique_specimenID = Row.names) |>
   mutate(
@@ -338,9 +356,35 @@ pc_plot <- merge(pc$x[, c("PC1", "PC2")], meta_study, by.x = "row.names",
     )
   )
 
+# PC1 separates by sequencingBatch, PC2 separates by sex
 plt <- ggplot(pc_plot, aes(x = PC1, y = PC2, color = mismatch_type, shape = is_load1)) +
   geom_point() + ggtitle("Jax.IU.Pitt_APOE4.Trem2.R47H")
 print(plt)
+
+plt <- ggplot(pc_plot, aes(x = PC1, y = PC2, color = specimenID %in% mismatches$specimenID, shape = sex)) +
+  geom_point() + ggtitle("Jax.IU.Pitt_APOE4.Trem2.R47H")
+print(plt)
+
+# PC3 separates by genotype
+plt <- ggplot(pc_plot, aes(x = PC2, y = PC3, color = mismatch_type, shape = is_load1)) +
+  geom_point() + ggtitle("Jax.IU.Pitt_APOE4.Trem2.R47H")
+print(plt)
+
+# PC4 somewhat separates by ageDeath
+plt <- ggplot(pc_plot, aes(x = PC2, y = PC3, color = factor(ageDeath), shape = is_load1)) +
+  geom_point() + ggtitle("Jax.IU.Pitt_APOE4.Trem2.R47H")
+print(plt)
+
+# Expression plots
+
+counts_load1 <- make_counts_df(meta_load1, counts, symbol_map,
+                               c("APOE", "Apoe", "Trem2")) |>
+  merge(valid_all) |>
+  tidyr::pivot_longer(c(APOE, Apoe, Trem2), names_to = "gene", values_to = "expr")
+
+ggplot(counts_load1, aes(x = genotype, y = expr, color = valid, shape = genotype)) +
+  geom_jitter() +
+  facet_grid(rows = vars(gene), cols = vars(ageDeath), scales = "free")
 
 
 ## Jax.IU.Pitt_LOAD2 -----------------------------------------------------------
@@ -349,7 +393,9 @@ print(plt)
 # can be validated with variant calling.
 meta_load2 <- subset(metadata_all, study == "Jax.IU.Pitt_LOAD2")
 
-# TODO there is some ambiguous WT APOE expression
+# TODO there is some ambiguous WT APOE expression. All 3 ambiguous samples
+# express Apoe and Trem2 at a rate comparable to other APOE non-carriers and should
+# maybe pass instead of failing?
 valid_apoe <- validate_APOE4_KI(meta_load2, counts, symbol_map)
 valid_trem2 <- validate_Trem2_R47H(meta_load2, geno_info)
 valid_hAbeta <- validate_hAbeta_KI(meta_load2, geno_info,
@@ -361,7 +407,7 @@ valid_all <- merge(valid_apoe$valid, valid_trem2$valid,
   mutate(valid = valid.x & valid.y & valid) |>
   select(unique_specimenID, valid)
 
-valid_samples <- rbind(valid_samples, valid_all)
+valid_samples_list[["Jax.IU.Pitt_LOAD2"]] <- valid_all
 
 # Tmp PCA
 
@@ -377,7 +423,7 @@ hv <- names(sort(vars, decreasing = TRUE))[1:2000]
 
 pc <- prcomp(t(counts_load2[hv, meta_study$unique_specimenID]))
 
-pc_plot <- merge(pc$x[, c("PC1", "PC2")], meta_study, by.x = "row.names",
+pc_plot <- merge(pc$x[, paste0("PC", 1:10)], meta_study, by.x = "row.names",
                  by.y = "unique_specimenID") |>
   dplyr::rename(unique_specimenID = Row.names) |>
   mutate(
@@ -391,9 +437,31 @@ pc_plot <- merge(pc$x[, c("PC1", "PC2")], meta_study, by.x = "row.names",
     )
   )
 
+# PC1 separates by sequencingBatch and somewhat by ageDeath
 plt <- ggplot(pc_plot, aes(x = PC1, y = PC2, color = mismatch_type, shape = has_apoe4)) +
   geom_point() + ggtitle("Jax.IU.Pitt_LOAD2")
 print(plt)
+
+# PC3 separates by sex -- highlight the sex mismatches
+plt <- ggplot(pc_plot, aes(x = PC2, y = PC3, color = specimenID %in% mismatches$specimenID, shape = sex)) +
+  geom_point() + ggtitle("Jax.IU.Pitt_LOAD2")
+print(plt)
+
+# PC7 separates by genotype
+plt <- ggplot(pc_plot, aes(x = PC1, y = PC7, color = mismatch_type, shape = has_apoe4)) +
+  geom_point() + ggtitle("Jax.IU.Pitt_LOAD2")
+print(plt)
+
+# Expression plots
+
+counts_load2 <- make_counts_df(meta_load2, counts, symbol_map,
+                               c("APOE", "Apoe", "APP", "App", "Trem2")) |>
+  merge(valid_all) |>
+  tidyr::pivot_longer(c(APOE, Apoe, APP, App, Trem2), names_to = "gene", values_to = "expr")
+
+ggplot(counts_load2, aes(x = genotype, y = expr, color = valid, shape = genotype)) +
+  geom_jitter() +
+  facet_grid(rows = vars(gene), cols = vars(ageDeath), scales = "free")
 
 
 ## Jax.IU.Pitt_LOAD2.PrimaryScreen ---------------------------------------------
@@ -415,6 +483,8 @@ valid_all <- valid_apoe$valid |>
   select(unique_specimenID, valid)
 
 # TODO Il1rap, Il34, Ptprb
+
+valid_samples_list[["Jax.IU.Pitt_LOAD2.PrimaryScreen"]] <- valid_all
 
 # Tmp PCA
 
@@ -449,7 +519,18 @@ plt <- ggplot(pc_plot, aes(x = PC1, y = PC2, color = mismatch_type, shape = is_l
   geom_point() + ggtitle("Jax.IU.Pitt_LOAD2.PrimaryScreen")
 print(plt)
 
-valid_samples <- rbind(valid_samples, valid_all)
+counts_load2 <- make_counts_df(meta_load2pri, counts, symbol_map,
+                               c("APOE", "Apoe", "APP", "App", "Trem2")) |>
+  merge(valid_all) |>
+  tidyr::pivot_longer(c(APOE, Apoe, APP, App, Trem2), names_to = "gene", values_to = "expr")
+
+ggplot(counts_load2, aes(x = genotype, y = expr, color = valid)) +
+  geom_jitter() +
+  facet_grid(rows = vars(gene), cols = vars(ageDeath), scales = "free")
+
+# TODO The three non-carrier samples that express a small amount of APOE express
+# Apoe and Trem2 at levels comparable to other non-carriers. Should they pass
+# instead?
 
 
 ## UCI_3xTg-AD -----------------------------------------------------------------
@@ -457,7 +538,7 @@ valid_samples <- rbind(valid_samples, valid_all)
 meta_3x <- subset(metadata_all, study == "UCI_3xTg-AD")
 
 valid_3x <- validate_3x(meta_3x, geno_info, counts, symbol_map)
-valid_samples <- rbind(valid_samples, valid_3x$valid)
+valid_samples_list[["UCI_3xTg-AD"]] <- valid_3x$valid
 
 
 ## UCI_ABCA7 -------------------------------------------------------------------
@@ -467,12 +548,25 @@ meta_abca7 <- subset(metadata_all, study == "UCI_ABCA7")
 valid_5x <- validate_5x(meta_abca7, geno_info, counts, symbol_map)
 valid_abca7 <- validate_Abca7(meta_abca7, geno_info)
 
-# TODO check variant mismatch for 11451lh
 valid_all <- merge(valid_5x$valid, valid_abca7$valid, by = "unique_specimenID") |>
   mutate(valid = valid.x & valid.y) |>
   select(unique_specimenID, valid)
 
-valid_samples <- rbind(valid_samples, valid_all)
+valid_samples_list[["UCI_ABCA7"]] <- valid_all
+
+# Sample 11451lh has all 6 detected variants but only expresses 11.2 CPM APP and
+# 0.5 CPM PSEN1. Its APP expression is an outlier compared to other
+# 5XFAD_noncarriers but not nearly high enough to suggest the actual 5XFAD
+# genotype. To be cautious, this sample is dropped.
+
+counts_abca7 <- make_counts_df(meta_abca7, counts, symbol_map,
+                               c("APP", "App", "PSEN1", "Psen1", "Abca7")) |>
+  merge(valid_all) |>
+  tidyr::pivot_longer(c(APP, App, PSEN1, Psen1, Abca7), names_to = "gene", values_to = "expr")
+
+ggplot(counts_abca7, aes(x = genotype, y = expr, color = valid, shape = genotype)) +
+  geom_jitter() +
+  facet_wrap(~gene, scales = "free")
 
 
 ## UCI_Clu-h2kbKI --------------------------------------------------------------
@@ -487,7 +581,16 @@ valid_all <- merge(valid_5x$valid, valid_clu$valid, by = "unique_specimenID") |>
   mutate(valid = valid.x & valid.y) |>
   select(unique_specimenID, valid)
 
-valid_samples <- rbind(valid_samples, valid_all)
+valid_samples_list[["UCI_Clu-h2kbKI"]] <- valid_all
+
+counts_clu <- make_counts_df(meta_clu, counts, symbol_map,
+                             c("APP", "App", "PSEN1", "Psen1", "CLU", "Clu")) |>
+  merge(valid_all) |>
+  tidyr::pivot_longer(c(APP, App, PSEN1, Psen1, CLU, Clu), names_to = "gene", values_to = "expr")
+
+ggplot(counts_clu, aes(x = genotype, y = expr, color = genotype, shape = genotype)) +
+  geom_jitter() +
+  facet_wrap(~gene, scales = "free")
 
 
 ## UCI_Bin1K358R ---------------------------------------------------------------
@@ -502,7 +605,16 @@ valid_all <- merge(valid_5x$valid, valid_bin1$valid, by = "unique_specimenID") |
   mutate(valid = valid.x & valid.y) |>
   select(unique_specimenID, valid)
 
-valid_samples <- rbind(valid_samples, valid_all)
+valid_samples_list[["UCI_Bin1K358R"]] <- valid_all
+
+counts_bin1 <- make_counts_df(meta_bin1, counts, symbol_map,
+                              c("APP", "App", "PSEN1", "Psen1", "Bin1")) |>
+  merge(valid_all) |>
+  tidyr::pivot_longer(c(APP, App, PSEN1, Psen1, Bin1), names_to = "gene", values_to = "expr")
+
+ggplot(counts_bin1, aes(x = genotype, y = expr, color = genotype, shape = genotype)) +
+  geom_jitter() +
+  facet_wrap(~gene, scales = "free")
 
 
 ## UCI_PrimaryScreen - Abi3-S209F ----------------------------------------------
@@ -512,10 +624,6 @@ valid_samples <- rbind(valid_samples, valid_all)
 #meta_abi3 <- subset(metadata_all, study == "UCI_PrimaryScreen")
 #valid_abi3 <- validate_Abi3(meta_abi3, geno_info)
 
-#valid_samples <- valid_samples |>
-#  merge(select(valid_abi3, unique_specimenID, valid_abi3_variant),
-#        all = TRUE)
-
 
 ## UCI_PrimaryScreen - hAbeta-KI -----------------------------------------------
 
@@ -523,10 +631,6 @@ valid_samples <- rbind(valid_samples, valid_all)
 
 #meta_hAbeta <- subset(metadata_all, study == "UCI_PrimaryScreen")
 #valid_hAbeta <- validate_hAbeta_KI(meta_hAbeta, geno_info)
-
-#valid_samples <- valid_samples |>
-#  merge(select(valid_hAbeta, unique_specimenID, valid_abeta_ki_variant),
-#        all = TRUE)
 
 
 ## UCI_PrimaryScreen - Picalm-H458R --------------------------------------------
@@ -563,10 +667,6 @@ valid_samples <- rbind(valid_samples, valid_all)
 
 #valid_trem2ko <- validate_Trem2_KO(meta_trem2ko, counts, symbol_map)
 
-#valid_samples <- valid_samples |>
-#  merge(select(valid_trem2ko, unique_specimenID, valid_trem2_ko_expression),
-#        all = TRUE)
-
 
 ## UCI_Trem2-R47H_NSS ----------------------------------------------------------
 
@@ -579,12 +679,23 @@ valid_all <- merge(valid_5x$valid, valid_trem2_nss$valid, by = "unique_specimenI
   mutate(valid = valid.x & valid.y) |>
   select(unique_specimenID, valid)
 
-valid_samples <- rbind(valid_samples, valid_all)
+valid_samples_list[["UCI_Trem2-R47H_NSS"]] <- valid_all
+
+counts_trem2 <- make_counts_df(meta_trem2_nss, counts, symbol_map,
+                               c("APP", "App", "PSEN1", "Psen1", "Trem2")) |>
+  merge(valid_all) |>
+  tidyr::pivot_longer(c(APP, App, PSEN1, Psen1, Trem2), names_to = "gene", values_to = "expr")
+
+ggplot(counts_trem2, aes(x = genotype, y = expr, color = valid, shape = genotype)) +
+  geom_jitter() +
+  facet_wrap(~gene, scales = "free")
 
 
 # Combine all validation results -----------------------------------------------
 
-valid_samples <- merge(valid_samples, sex_matches)
+valid_samples <- do.call(rbind, valid_samples_list) |>
+  merge(sex_matches) |>
+  distinct()
 
 stopifnot(nrow(valid_samples) == nrow(metadata_all))
 stopifnot(all(valid_samples$unique_specimenID %in% metadata_all$unique_specimenID))
@@ -598,22 +709,11 @@ print(subset(valid_samples, !validated))
 
 # TODO maybe split "valid" into "valid_genotype" and "valid_expression" for
 # readability
+# TODO rename to "genotype_validated_samples.csv" and put in Metadata folder?
 write.csv(valid_samples, file.path("output", "Model_AD_valid_samples.csv"),
           row.names = FALSE, quote = FALSE)
 
-jax_studies <- grep("Jax", unique(metadata_all$study), value = TRUE)
 meta_stats <- merge(metadata_all, valid_samples) |>
-  # Fix a few age timepoints for Jax studies
-  mutate(
-    ageDeath = case_when(
-      study %in% jax_studies & ageDeath <= 6 ~ 4,
-      study %in% jax_studies & ageDeath > 6 & ageDeath <= 10 ~ 8,
-      study %in% jax_studies & ageDeath > 10 & ageDeath <= 16 ~ 12,
-      study %in% jax_studies & ageDeath > 16 & ageDeath <= 20 ~ 18,
-      study %in% jax_studies & ageDeath > 20 ~ 24,
-      .default = round(ageDeath)
-    )
-  ) |>
   dplyr::rename(age = ageDeath)
 
 stats <- meta_stats |>
