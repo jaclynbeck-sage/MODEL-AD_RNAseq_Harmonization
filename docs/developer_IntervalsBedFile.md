@@ -408,6 +408,8 @@ A familial AD mutation in the mouse *Psen1* gene. Changes AA 145 and 146 from IM
 
 **Jax:** <https://www.jax.org/strain/004807>
 
+> This variant was never detected in 3xTg-AD_carrier mice from the UCI_3xTg-AD data set, so it is not a reliable marker.
+
 ------------------------------------------------------------------------
 
 ### Ptprb\*D57N
