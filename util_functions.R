@@ -95,13 +95,14 @@ get_all_metadata <- function() {
 #   a list of matrices, one per study
 get_all_counts_files <- function(studies, meta_list, symbol_map,
                                  count_type = "gene_counts") {
+  cat("Reading counts files...", "\n")
   count_folders <- syn_get_unique_children("raw_gene_counts")
   names(count_folders) <- sapply(count_folders, "[[", "name")
 
   stopifnot(all(studies %in% names(count_folders)))
 
   counts_list <- lapply(studies, function(study_name) {
-    print(study_name)
+    cat("\t", study_name, "\n")
     folder <- count_folders[[study_name]]$id
 
     count_file_id <- synFindEntityId(str_glue("{study_name}.{count_type}.tsv"),
@@ -206,8 +207,9 @@ syn_safe_upload <- function(local_file, parent_id, used = NULL, executed = NULL)
                        forceVersion = FALSE,
                        set_annotations = FALSE)
 
-  print(str_glue("Stored {basename(local_file)}: ",
-                 "{syn_file$id}.{syn_file$versionNumber}"))
+  cat(str_glue("Stored {basename(local_file)}: ",
+               "{syn_file$id}.{syn_file$versionNumber}"),
+      "\n")
 
   return(syn_file)
 }

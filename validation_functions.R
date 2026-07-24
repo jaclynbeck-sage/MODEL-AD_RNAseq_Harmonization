@@ -1,8 +1,8 @@
 # Given a data frame of samples with genotype variant mismatches, print out this
 # information grouped by carrier/non-carrier status.
 print_variant_mismatches <- function(var_mismatches, genotype_name) {
-  wt_mismatches <- subset(var_mismatches, !is_carrier)
-  carrier_mismatches <- subset(var_mismatches, is_carrier)
+  wt_mismatches <- subset(var_mismatches, !is_carrier) |> as.data.frame()
+  carrier_mismatches <- subset(var_mismatches, is_carrier) |> as.data.frame()
 
   if (nrow(wt_mismatches) > 0) {
     cat(str_glue("Detected {genotype_name} variants in {nrow(wt_mismatches)} ",
@@ -15,7 +15,7 @@ print_variant_mismatches <- function(var_mismatches, genotype_name) {
         "\n")
   }
 
-  cat("\n")
+  cat("", "\n\n")
 
   if (nrow(carrier_mismatches) > 0) {
     cat(str_glue("{nrow(carrier_mismatches)} carrier samples had no detected ",
@@ -27,7 +27,7 @@ print_variant_mismatches <- function(var_mismatches, genotype_name) {
         "\n")
   }
 
-  cat("\n")
+  cat("", "\n\n")
 }
 
 
@@ -44,7 +44,7 @@ print_expression_mismatches <- function(mismatch_df, genotype_name, genes) {
         "\n")
   }
 
-  cat("\n")
+  cat("", "\n\n")
 }
 
 
@@ -257,8 +257,7 @@ validate_CLU_KI <- function(metadata, counts, symbol_map,
            valid = (is_carrier & expr_clu) |
              (!is_carrier & !expr_clu))
 
-  count_mismatches <- subset(counts_df,
-                             !(unique_specimenID %in% valid_expression$unique_specimenID)) |>
+  count_mismatches <- subset(counts_df, !valid) |>
     select(study, specimenID, unique_specimenID, genotype, expr_clu, CLU)
 
   print_expression_mismatches(count_mismatches, "CLU-KI")
@@ -303,8 +302,7 @@ validate_Trem2_KO <- function(metadata, counts, symbol_map) {
            valid = (genotype == "Trem2-KO" & !expr_trem2) |
              (genotype != "Trem2-KO" & expr_trem2))
 
-  count_mismatches <- subset(counts_df,
-                             !(unique_specimenID %in% valid_expression$unique_specimenID)) |>
+  count_mismatches <- subset(counts_df, !valid) |>
     select(study, specimenID, unique_specimenID, genotype, expr_trem2, Trem2)
 
   print_expression_mismatches(count_mismatches, "Trem2-KO")

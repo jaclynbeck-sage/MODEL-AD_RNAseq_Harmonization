@@ -129,7 +129,6 @@ symbol_map <- read.csv(symbol_map_file$path) |>
   arrange(ensembl_gene_id)
 
 # Read in all counts files
-cat("Reading counts files...\n")
 counts_list <- get_all_counts_files(studies,
                                     meta_list,
                                     symbol_map,
@@ -254,9 +253,11 @@ mismatches$est_sex <- "unknown"
 mismatches$est_sex[mismatches$est_female & !mismatches$est_male] <- "female"
 mismatches$est_sex[mismatches$est_male & !mismatches$est_female] <- "male"
 
-print(paste(nrow(mismatches), "samples have mismatched sex:"))
+cat("*** Sex verification ***", "\n", "\n")
+cat(paste(nrow(mismatches), "samples have mismatched sex:"), "\n")
 print(select(mismatches, study, specimenID, reported_sex, est_sex,
              Xist, Eif2s3y, Ddx3y, Kdm5d, mean_y))
+cat("", "\n\n")
 
 # The two Jax.IU.Pitt_LOAD2.PrimaryScreen samples that fail (both female) have a
 # mean_y of 3.64 and 11.06, which is much lower than male samples but higher
@@ -273,6 +274,7 @@ print(select(mismatches, study, specimenID, reported_sex, est_sex,
 
 ## Jax.IU.Pitt_5XFAD and UCI_5XFAD ---------------------------------------------
 
+cat("*** Jax.IU.Pitt_5XFAD, UCI_5XFAD ***", "\n", "\n")
 meta_5x <- subset(metadata_all,
                   study %in% c("Jax.IU.Pitt_5XFAD", "UCI_5XFAD"))
 
@@ -315,6 +317,8 @@ for (study_name in unique(meta_5x$study)) {
 
 
 ## Jax.IU.Pitt_APOE4.Trem2.R47H ------------------------------------------------
+
+cat("*** Jax.IU.Pitt_APOE4.Trem2.R47H ***", "\n", "\n")
 
 # APOE4 KI can be validated with gene expression only, and Trem2-R47H can be
 # validated with variant calling.
@@ -388,6 +392,8 @@ ggplot(counts_load1, aes(x = genotype, y = expr, color = valid, shape = genotype
 
 
 ## Jax.IU.Pitt_LOAD2 -----------------------------------------------------------
+
+cat("*** Jax.IU.Pitt_LOAD2 ***", "\n", "\n")
 
 # APOE4 KI can be validated with gene expression only, and Trem2-R47H and APP-KI
 # can be validated with variant calling.
@@ -466,6 +472,7 @@ ggplot(counts_load2, aes(x = genotype, y = expr, color = valid, shape = genotype
 
 ## Jax.IU.Pitt_LOAD2.PrimaryScreen ---------------------------------------------
 
+cat("*** Jax.IU.Pitt_LOAD2.PrimaryScreen ***", "\n", "\n")
 meta_load2pri <- subset(metadata_all, study == "Jax.IU.Pitt_LOAD2.PrimaryScreen")
 
 # LOAD2 doesn't follow the same nomenclature as LOAD1 genotypes
@@ -535,6 +542,7 @@ ggplot(counts_load2, aes(x = genotype, y = expr, color = valid)) +
 
 ## UCI_3xTg-AD -----------------------------------------------------------------
 
+cat("*** UCI_3xTg-AD ***", "\n", "\n")
 meta_3x <- subset(metadata_all, study == "UCI_3xTg-AD")
 
 valid_3x <- validate_3x(meta_3x, geno_info, counts, symbol_map)
@@ -543,6 +551,7 @@ valid_samples_list[["UCI_3xTg-AD"]] <- valid_3x$valid
 
 ## UCI_ABCA7 -------------------------------------------------------------------
 
+cat("*** UCI_ABCA7 ***", "\n", "\n")
 meta_abca7 <- subset(metadata_all, study == "UCI_ABCA7")
 
 valid_5x <- validate_5x(meta_abca7, geno_info, counts, symbol_map)
@@ -571,6 +580,7 @@ ggplot(counts_abca7, aes(x = genotype, y = expr, color = valid, shape = genotype
 
 ## UCI_Clu-h2kbKI --------------------------------------------------------------
 
+cat("*** UCI_Clu-h2kbKI ***", "\n", "\n")
 meta_clu <- subset(metadata_all, study == "UCI_Clu-h2kbKI")
 
 valid_5x <- validate_5x(meta_clu, geno_info, counts, symbol_map)
@@ -595,6 +605,7 @@ ggplot(counts_clu, aes(x = genotype, y = expr, color = genotype, shape = genotyp
 
 ## UCI_Bin1K358R ---------------------------------------------------------------
 
+cat("*** UCI_Bin1K358R ***", "\n", "\n")
 meta_bin1 <- subset(metadata_all, study == "UCI_Bin1K358R")
 
 valid_5x <- validate_5x(meta_bin1, geno_info, counts, symbol_map)
@@ -670,6 +681,7 @@ ggplot(counts_bin1, aes(x = genotype, y = expr, color = genotype, shape = genoty
 
 ## UCI_Trem2-R47H_NSS ----------------------------------------------------------
 
+cat("*** UCI_Trem2-R47H_NSS ***", "\n", "\n")
 meta_trem2_nss <- subset(metadata_all, study == "UCI_Trem2-R47H_NSS")
 
 valid_5x <- validate_5x(meta_trem2_nss, geno_info, counts, symbol_map)
@@ -704,8 +716,9 @@ stopifnot(all(metadata_all$unique_specimenID %in% valid_samples$unique_specimenI
 valid_samples$validated <- rowSums(valid_samples[, c("valid_sex", "valid")]) == 2
 
 # TODO better output now that I've removed details from the valid_samples df
-print(paste(sum(!valid_samples$validated), "samples failed validation:"))
+cat(paste(sum(!valid_samples$validated), "samples failed validation:"), "\n")
 print(subset(valid_samples, !validated))
+cat("", "\n\n")
 
 # TODO maybe split "valid" into "valid_genotype" and "valid_expression" for
 # readability
