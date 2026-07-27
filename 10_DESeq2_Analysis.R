@@ -49,8 +49,11 @@ counts <- do.call(cbind, lapply(counts_list, "[[", "counts")) |>
 counts_provenance <- do.call(rbind, lapply(counts_list, "[[", "provenance"))
 
 metadata_all <- do.call(rbind, meta_list) |>
+  bin_jax_ages() |>
   mutate(
     sex = str_to_title(sex), # Upper-case
+    # Change to "Females" and "Males", plural
+    sex_group = paste0(sex, "s"),
     # Add "months" to the end of each age
     age_group = paste(round(ageDeath), "months"),
     # Title case tissue
@@ -256,7 +259,7 @@ get_all_de_results <- function(metadata, counts, parameters,
       summary(res)
 
       meta_group <- meta_sub[meta_sub$group == group, ] |>
-        select(age_group, sex, tissue) |>
+        select(age_group, sex_group, tissue) |>
         distinct()
 
       if (nrow(meta_group) > 1) {
@@ -273,7 +276,7 @@ get_all_de_results <- function(metadata, counts, parameters,
                case = contr[2],
                control = contr[3],
                age = as.character(meta_group$age_group),
-               sex = as.character(meta_group$sex),
+               sex = as.character(meta_group$sex_group),
                tissue = meta_group$tissue) |>
         dplyr::relocate(ensembl_gene_id, .before = baseMean) |>
         dplyr::select(ensembl_gene_id, log2FoldChange, padj, model, case,
@@ -319,12 +322,8 @@ get_norm_counts <- function(meta, counts, model_name) {
 ## Jax.IU.Pitt_5XFAD -----------------------------------------------------------
 
 # This data has no separate batches.
-# Bin the ages into 4, 6, and 12 months
 meta_jax5x <- subset(metadata_all, study == "Jax.IU.Pitt_5XFAD") |>
-  mutate(age_group = case_when(ageDeath < 5 ~ "4 months",
-                               ageDeath > 5 & ageDeath < 10 ~ "6 months",
-                               ageDeath > 10 ~ "12 months")) |>
-  subset(age_group != "6 months") # We only want 4 mo and 12 mo for the explorer
+  subset(age_group != "8 months") # We only want 4 mo and 12 mo for the explorer
 
 params_jax5x <- list(
   study = "Jax.IU.Pitt_5XFAD",
@@ -340,8 +339,15 @@ res_jax5x <- get_all_de_results(
   model_vars = c("genotype")
 )
 
+# Males and females together, separated by ageDeath
+res_jax5x_mf <- get_all_de_results(
+  meta_jax5x, counts, params_jax5x,
+  group_cols = c("age_group"),
+  model_vars = c("genotype", "sex")
+)
+
 jax5x_de_file <- str_glue("output/de_output/{params_jax5x$study}_differential_expression.csv")
-write.csv(res_jax5x, jax5x_de_file,
+write.csv(rbind(res_jax5x, res_jax5x_mf), jax5x_de_file,
           row.names = FALSE, quote = FALSE)
 
 norm_jax5x <- get_norm_counts(meta_jax5x, counts, params_jax5x$model_name)
@@ -359,18 +365,8 @@ synapse_upload_de(params_jax5x$study, provenance_df, folder_syn_ids,
 meta_load1 <- subset(metadata_all, study == "Jax.IU.Pitt_APOE4.Trem2.R47H") |>
   # drop the two samples with Trem2-R47H_heterozygous genotypes
   subset(!grepl("heterozygous", genotype)) |>
-
-  # The ages of the mice span a wide range and need to be binned into 4, 8, 12,
-  # and 24 month groups. The 4 month age group spans 3-4 months, the 8 month
-  # group spans 7-10 months, the 12 month group actually spans 13-16 months, and
-  # the 24 month group spans 24-28 months. Because of this spread, we will use
-  # their real age as a variable in the model within each age group.
-  mutate(age_group = case_when(ageDeath < 5 ~ "4 months",
-                               ageDeath > 5 & ageDeath < 11 ~ "8 months",
-                               ageDeath > 11 & ageDeath < 20 ~ "12 months",
-                               ageDeath > 20 ~ "24 months")) |>
-  # We only want 4 and 12 months for the explorer
-  subset(age_group %in% c("4 months", "12 months"))
+  # We only want 4, 12, and 24 months for the explorer
+  subset(age_group != "8 months")
 
 ref_geno <- "APOE4-KI_WT; Trem2-R47H_WT"
 
@@ -385,14 +381,26 @@ params_load1 <- list(
   )
 )
 
+# The ages of the mice span a wide range within each bin. The 4 month age
+# group spans ages 3-4 months, and the 12 month group actually spans ages
+# 13-16 months. Because of this spread, we will use their real age as a
+# variable in the model within each age group.
+
 # Separated by sex and ageDeath
 res_load1 <- get_all_de_results(
   meta_load1, counts, params_load1,
   group_cols = c("sex", "age_group"),
-  model_vars = c("genotype", "ageDeath", "sequencingBatch")
+  model_vars = c("genotype", "ageDeathNumeric", "sequencingBatch")
 )
 
-res_load1 <- res_load1 |>
+# Males and females together, separated by ageDeath
+res_load1_mf <- get_all_de_results(
+  meta_load1, counts, params_load1,
+  group_cols = c("age_group"),
+  model_vars = c("genotype", "sex", "ageDeathNumeric", "sequencingBatch")
+)
+
+res_load1_all <- rbind(res_load1, res_load1_mf) |>
   # Re-name model for certain genotypes to work with the explorer
   mutate(model = case_match(case,
                             "APOE4-KI_WT; Trem2-R47H_homozygous" ~ "Trem2R47H",
@@ -400,7 +408,7 @@ res_load1 <- res_load1 |>
                             .default = model))
 
 load1_de_file <- str_glue("output/de_output/{params_load1$study}_differential_expression.csv")
-write.csv(res_load1, load1_de_file,
+write.csv(res_load1_all, load1_de_file,
           row.names = FALSE, quote = FALSE)
 
 norm_load1 <- get_norm_counts(meta_load1, counts, params_load1$model_name) |>
@@ -428,10 +436,70 @@ load1_norm_files <- lapply(unique(norm_load1$model), function(model_name) {
 })
 
 # Upload to Synapse
-tmp_folder_ids <- folder_syn_ids
-#tmp_folder_ids$norm_counts <- "syn72388361" # TODO
-synapse_upload_de(params_load1$study, provenance_df, tmp_folder_ids,
+synapse_upload_de(params_load1$study, provenance_df, folder_syn_ids,
                   load1_de_file, load1_norm_files)
+
+
+## Jax.IU.Pitt_LOAD2 -----------------------------------------------------------
+
+meta_load2 <- subset(metadata_all, study == "Jax.IU.Pitt_LOAD2") |>
+  # Drop the one hAPP-3/3 heterozygous genotype.
+  subset(!grepl("heterozygous", genotype)) |>
+  # Note: for the explorer, we only want to compare LOAD1 vs LOAD2. There is
+  # only one age group (18 months) with enough WT samples to compare LOAD2 vs
+  # WT, so this analysis is skipped. We also remove WT mice from the data set,
+  # because either:
+  #   - No WT mice exist in some age/sex groups already, or
+  #   - In the non-18-month age groups where WT mice exist, LOAD1/LOAD2 were
+  #     sequenced in two batches together but all WT mice were sequenced
+  #     separately in a third batch, which doesn't allow us to use
+  #     sequencingBatch in the model.
+  subset(genotype != "APOE4-KI_WT; Trem2-R47H_WT; hAPP-3/3_WT")
+
+load2_geno <- "APOE4-KI_homozygous; Trem2-R47H_homozygous; hAPP-3/3_homozygous"
+load1_geno <- "APOE4-KI_homozygous; Trem2-R47H_homozygous; hAPP-3/3_WT"
+
+params_load2 <- list(
+  study = "Jax.IU.Pitt_LOAD2",
+  model_name = "LOAD2",
+  ref_genotype = load1_geno,
+  contrasts = list(c("genotype", load2_geno, load1_geno))
+)
+
+# The ages of the mice span a wide range within each bin. The 4 month age
+# group spans ages 3-6 months, and the 12 month group spans ages 12-13 months,
+# the 18 month group spans ages 18-19 months, and the 24 month group spans
+# ages 22-25 months. Because of this spread, we will use their real age as a
+# variable in the model within each age group. Some age/sex groups have two
+# batches, so we also use sequencingBatch in the model for these groups.
+
+# Separated by sex and ageDeath
+res_load2 <- get_all_de_results(
+  meta_load2, counts, params_load2,
+  group_cols = c("sex", "age_group"),
+  model_vars = c("genotype", "ageDeathNumeric", "sequencingBatch")
+)
+
+# Males and females together, separated by ageDeath
+res_load2_mf <- get_all_de_results(
+  meta_load2, counts, params_load2,
+  group_cols = c("age_group"),
+  model_vars = c("genotype", "sex", "ageDeathNumeric", "sequencingBatch")
+)
+
+load2_de_file <- str_glue("output/de_output/{params_load2$study}_differential_expression.csv")
+write.csv(rbind(res_load2, res_load2_mf), load2_de_file,
+          row.names = FALSE, quote = FALSE)
+
+norm_load2 <- get_norm_counts(meta_load2, counts, params_load2$model_name)
+load2_norm_file <- str_glue("output/de_output/{params_load2$study}_normalized_expression.csv")
+write.csv(norm_load2, load2_norm_file,
+          row.names = FALSE, quote = FALSE)
+
+
+# Upload to Synapse
+synapse_upload_de(params_load2$study, provenance_df, folder_syn_ids,
+                  load2_de_file, load2_norm_file)
 
 
 ## Jax.IU.Pitt_LOAD2.PrimaryScreen ---------------------------------------------
@@ -511,16 +579,12 @@ synapse_upload_de(params_load1$study, provenance_df, tmp_folder_ids,
 # Note: real ages vary by up to 3 months, so the numeric age needs to be a
 # covariate in the design for DEseq2.
 
-meta_load2 <- subset(metadata_all, study == "Jax.IU.Pitt_LOAD2.PrimaryScreen") |>
+meta_load2pri <- subset(metadata_all, study == "Jax.IU.Pitt_LOAD2.PrimaryScreen") |>
   mutate(
-    age_group = case_match(
-      age_group,
-      c("5 months", "6 months") ~ "4 months",
-      c("11 months", "13 months", "15 months") ~ "12 months",
-      .default = age_group
-    ),
     model = str_replace(genotype, "_(homozygous|WT|KI/KI)(/WT)?", "")
   )
+
+# TODO
 
 
 ## UCI_3xTg-AD -----------------------------------------------------------------
@@ -539,8 +603,14 @@ res_3x <- get_all_de_results(
   model_vars = c("genotype")
 )
 
+res_3x_mf <- get_all_de_results(
+  metadata_all, counts, params_3x,
+  group_cols = c("age_group"),
+  model_vars = c("genotype", "sex")
+)
+
 de_3x_file <- str_glue("output/de_output/{params_3x$study}_differential_expression.csv")
-write.csv(res_3x, de_3x_file,
+write.csv(rbind(res_3x, res_3x_mf), de_3x_file,
           row.names = FALSE, quote = FALSE)
 
 norm_3x <- get_norm_counts(subset(metadata_all, study == params_3x$study),
@@ -577,8 +647,14 @@ res_5x <- get_all_de_results(
   model_vars = c("genotype")
 )
 
+res_5x_mf <- get_all_de_results(
+  meta_uci5x, counts, params_5x,
+  group_cols = c("tissue", "age_group"),
+  model_vars = c("genotype", "sex")
+)
+
 de_5x_file <- str_glue("output/de_output/{params_5x$study}_differential_expression.csv")
-write.csv(res_5x, de_5x_file,
+write.csv(rbind(res_5x, res_5x_mf), de_5x_file,
           row.names = FALSE, quote = FALSE)
 
 norm_5x <- get_norm_counts(meta_uci5x, counts, params_5x$model_name)
@@ -618,13 +694,19 @@ res_abca7 <- get_all_de_results(
   model_vars = c("genotype")
 )
 
-res_abca7 <- res_abca7 |>
+res_abca7_mf <- get_all_de_results(
+  metadata_all, counts, params_abca7,
+  group_cols = c("age_group"),
+  model_vars = c("genotype", "sex")
+)
+
+res_abca7_all <- rbind(res_abca7, res_abca7_mf) |>
   # Re-name model for certain genotypes to work with the explorer
   mutate(model = ifelse(case == "5XFAD_carrier; Abca7-V1599M_homozygous",
                         "Abca7*V1599M.5xFAD", model))
 
 de_abca7_file <- str_glue("output/de_output/{params_abca7$study}_differential_expression.csv")
-write.csv(res_abca7, de_abca7_file,
+write.csv(res_abca7_all, de_abca7_file,
           row.names = FALSE, quote = FALSE)
 
 norm_abca7 <- get_norm_counts(subset(metadata_all, study == params_abca7$study),
@@ -648,7 +730,7 @@ norm_abca7_files <- lapply(unique(norm_abca7$model), function(model_name) {
 })
 
 # Upload to Synapse
-synapse_upload_de(params_abca7$study, provenance_df, tmp_folder_ids,
+synapse_upload_de(params_abca7$study, provenance_df, folder_syn_ids,
                   de_abca7_file, norm_abca7_files)
 
 
@@ -810,7 +892,7 @@ norm_bin1_files <- lapply(unique(norm_bin1$model), function(model_name) {
 })
 
 # Upload to Synapse
-synapse_upload_de(params_bin1$study, provenance_df, tmp_folder_ids,
+synapse_upload_de(params_bin1$study, provenance_df, folder_syn_ids,
                   de_bin1_file, norm_bin1_files)
 
 
@@ -835,13 +917,19 @@ res_clu <- get_all_de_results(
   model_vars = c("genotype")
 )
 
-res_clu <- res_clu |>
+res_clu_mf <- get_all_de_results(
+  metadata_all, counts, params_clu,
+  group_cols = c("age_group"),
+  model_vars = c("genotype", "sex")
+)
+
+res_clu_all <- rbind(res_clu, res_clu_mf) |>
   # Re-name model for certain genotypes to work with the explorer
   mutate(model = ifelse(case == "5XFAD_carrier; Clu-rs2279590_KI_homozygous",
                         "Clu-h2kbKI.5xFAD", model))
 
 de_clu_file <- str_glue("output/de_output/{params_clu$study}_differential_expression.csv")
-write.csv(res_clu, de_clu_file,
+write.csv(res_clu_all, de_clu_file,
           row.names = FALSE, quote = FALSE)
 
 norm_clu <- get_norm_counts(subset(metadata_all, study == params_clu$study),
@@ -863,7 +951,7 @@ norm_clu_files <- lapply(unique(norm_clu$model), function(model_name) {
 })
 
 # Upload to Synapse
-synapse_upload_de(params_clu$study, provenance_df, tmp_folder_ids,
+synapse_upload_de(params_clu$study, provenance_df, folder_syn_ids,
                   de_clu_file, norm_clu_files)
 
 
@@ -893,13 +981,19 @@ res_trem2nss <- get_all_de_results(
   model_vars = c("genotype")
 )
 
-res_trem2nss <- res_trem2nss |>
+res_trem2nss_mf <- get_all_de_results(
+  metadata_all, counts, params_trem2nss,
+  group_cols = c("age_group"),
+  model_vars = c("genotype", "sex")
+)
+
+res_trem2nss_all <- rbind(res_trem2nss, res_trem2nss_mf) |>
   # Re-name model for certain genotypes to work with the explorer
   mutate(model = ifelse(case == "5XFAD_carrier; Trem2-R47H_NSS_homozygous",
                         "Trem2-R47H_NSS.5xFAD", model))
 
 de_trem2nss_file <- str_glue("output/de_output/{params_trem2nss$study}_differential_expression.csv")
-write.csv(res_trem2nss, de_trem2nss_file,
+write.csv(res_trem2nss_all, de_trem2nss_file,
           row.names = FALSE, quote = FALSE)
 
 norm_trem2nss <- get_norm_counts(subset(metadata_all, study == params_trem2nss$study),
@@ -924,5 +1018,5 @@ norm_trem2nss_files <- lapply(unique(norm_trem2nss$model), function(model_name) 
 })
 
 # Upload to Synapse
-synapse_upload_de(params_trem2nss$study, provenance_df, tmp_folder_ids,
+synapse_upload_de(params_trem2nss$study, provenance_df, folder_syn_ids,
                   de_trem2nss_file, norm_trem2nss_files)
