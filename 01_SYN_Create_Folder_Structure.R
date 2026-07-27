@@ -146,7 +146,8 @@ all_folders <- subset(all_folders,
 # Write to a config file. We want to include comments, so we write manually
 # instead of using write_yaml. Not all the folders listed are used in the
 # pipeline but it's simpler to write everything instead of manually creating a
-# list.
+# list. Each line is padded with whitespace so syanpse IDs appear nicely aligned
+# in the file.
 # File structure is as follows:
 # ```
 # # Auto-generated file
@@ -162,14 +163,31 @@ all_folders <- subset(all_folders,
 #     <name>: "<id>"  # <path>
 #     ...
 # ```
+pad <- function(config_name, id, path) {
+  base_string <- str_glue("    {config_name}:") |>
+    str_pad(24, side = "right")
+  str_glue("{base_string} \"{id}\"  # {path}")
+}
+
 staging <- sapply(1:nrow(all_folders), function(N) {
   row <- all_folders[N, ]
-  str_glue("    {row$config_name}: \"{row$id}\" \t# {row$path}")
+  pad(row$config_name, row$id, row$path)
 })
 
+# Manually add a norm_counts staging folder, which is never released to Data/
+# and is only used to temporarily store norm counts for the explorer
+norm_counts <- create_folder("Explorer Normalized Counts",
+                             parent_id = top_level_syn_ids$staging)
+
+staging <- c(
+  staging,
+  pad("norm_gene_counts", norm_counts$id, str_glue("Staging/{norm_counts$name}"))
+)
+
+# Data folder IDs
 data <- sapply(1:nrow(all_folders), function(N) {
   row <- all_folders[N, ]
-  str_glue("    {row$config_name}: \"{row$released_id}\" \t# {row$released_path}")
+  pad(row$config_name, row$released_id, row$released_path)
 })
 
 lines <- c("# Auto-generated file",

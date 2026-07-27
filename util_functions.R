@@ -154,21 +154,18 @@ get_all_counts_files <- function(studies, meta_list, symbol_map,
 
 synapse_upload_de <- function(study_name, provenance_df, folder_syn_ids,
                               de_filenames, norm_filenames) {
+  stopifnot(all(c("de_analysis", "norm_gene_counts") %in% names(folder_syn_ids)))
   prov <- provenance_df[study_name, ]
 
   # There might be more than one DE or normalized file associated with the study
   for (filename in de_filenames) {
-    syn_file <- File(filename, parent = folder_syn_ids$de_analysis)
-    syn_file <- synStore(syn_file, forceVersion = FALSE,
-                         set_annotations = FALSE,
-                         used = prov$used, executed = prov$executed)
+    syn_safe_upload(filename, parent_id = folder_syn_ids$de_analysis,
+                    used = prov$used, executed = prov$executed)
   }
 
   for (filename in norm_filenames) {
-    syn_file <- File(filename, parent = folder_syn_ids$norm_counts) # TODO
-    syn_file <- synStore(syn_file, forceVersion = FALSE,
-                         set_annotations = FALSE,
-                         used = prov$used, executed = prov$executed)
+    syn_safe_upload(filename, parent_id = folder_syn_ids$norm_gene_counts,
+                    used = prov$used, executed = prov$executed)
   }
 }
 
@@ -195,6 +192,8 @@ syn_md5_check <- function(local_file) {
 syn_safe_upload <- function(local_file, parent_id, used = NULL, executed = NULL) {
   # If a matching md5 sum is found on Synapse, return NULL
   if (syn_md5_check(local_file)) {
+    message(str_glue("An identical version of {basename(local_file)} already ",
+                     "exists on Synapse. File will not be uploaded to Staging."))
     return(NULL)
   }
 

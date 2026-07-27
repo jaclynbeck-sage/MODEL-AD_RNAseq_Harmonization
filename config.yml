@@ -24,7 +24,6 @@ default:
     main_project: "syn25882591"   # Synapse ID of the whole project
     released_data: "syn25882597"  # Top-level "Data" folder, which is public
     staging: "syn25882599"        # Top-level "Staging" folder, which is for unreleased data
-    norm_counts: "syn69058670"    # Model-AD explorer source data project, norm counts folder
 
   # Load staging and released data IDs
   staging_syn_ids: !expr config::get("staging_syn_ids", file="config_project_syn_ids.yml")
