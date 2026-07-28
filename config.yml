@@ -5,6 +5,8 @@ default:
   # ID for querying datasets on the AD Knowledge Portal
   adkp_query_id: "syn11346063"
 
+  upload_to_synapse: False
+
   # Which studies to harmonize
   studies: [
     "Jax.IU.Pitt_5XFAD",

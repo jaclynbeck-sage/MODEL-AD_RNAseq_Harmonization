@@ -190,6 +190,13 @@ syn_md5_check <- function(local_file) {
 # it does exist but the version in Data doesn't have the same Md5 sum as the
 # local file.
 syn_safe_upload <- function(local_file, parent_id, used = NULL, executed = NULL) {
+  do_upload <- config::get("upload_to_synapse")
+
+  if (!do_upload) {
+    message("File not uploaded: upload_to_synapse is FALSE.")
+    return(NULL)
+  }
+
   # If a matching md5 sum is found on Synapse, return NULL
   if (syn_md5_check(local_file)) {
     message(str_glue("An identical version of {basename(local_file)} already ",

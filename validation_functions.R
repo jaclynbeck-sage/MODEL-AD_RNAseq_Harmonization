@@ -153,7 +153,7 @@ validate_5x <- function(metadata, geno_calls, counts, symbol_map,
 #      threshold of > 20 CPM for positive expression of APOE.
 #   2. There are a few non-carrier samples with > 1 but < 2 CPM expression
 #      that seem to match other non-carriers and clearly don't match carriers
-#      in expression of mouse APOE, so these are probably true non-carriers.
+#      in expression of mouse Apoe, so these are probably true non-carriers.
 #      However, there are also some non-carriers in the two LOAD2 studies that
 #      express APOE at 7-20 CPM but express mouse Apoe at the same level as
 #      other non-carriers. Three of these are also ambiguous sex mismatches,
