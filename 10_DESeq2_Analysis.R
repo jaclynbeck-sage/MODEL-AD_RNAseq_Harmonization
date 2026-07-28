@@ -902,6 +902,8 @@ synapse_upload_de(params_bin1$study, provenance_df, folder_syn_ids,
 # group: all 4 month samples are in one batch and all 12 month samples are in
 # another. Therefore we do not need to batch correct the data.
 
+# This study has two tissues.
+
 params_clu <- list(
   study = "UCI_Clu-h2kbKI",
   model_name = "Clu-h2kbKI",
@@ -913,13 +915,13 @@ params_clu <- list(
 
 res_clu <- get_all_de_results(
   metadata_all, counts, params_clu,
-  group_cols = c("sex", "age_group"),
+  group_cols = c("tissue", "sex", "age_group"),
   model_vars = c("genotype")
 )
 
 res_clu_mf <- get_all_de_results(
   metadata_all, counts, params_clu,
-  group_cols = c("age_group"),
+  group_cols = c("tissue", "age_group"),
   model_vars = c("genotype", "sex")
 )
 
