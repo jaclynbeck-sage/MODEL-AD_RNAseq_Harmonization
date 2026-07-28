@@ -114,23 +114,6 @@ for (study in studies) {
     all_fastqs$specimenID <- str_replace(all_fastqs$specimenID, "C_.*", "rc")
     all_fastqs$specimenID <- str_replace(all_fastqs$specimenID, "H_.*", "rh")
 
-  } else if (study == "UCI_ABCA7") {
-    # There are 4 fastq files that don't have an annotated specimen ID, but
-    # the filename contains an ID that exists in the assay metadata. For these
-    # 4 files, we extract the ID from the name and add "lh" to it to get the
-    # specimen ID.
-    missing_inds <- which(is.na(all_fastqs$specimenID) |
-                            nchar(all_fastqs$specimenID) == 0)
-    fastq_names <- all_fastqs$name[missing_inds]
-
-    # IndividualID is the field before the read number, which is either "1" or
-    # "2" instead of "R1" or "R2". Files end in "fq.gz". "lh" is added to the
-    # individualID to get the specimenID.
-    fastq_ids <- str_replace(fastq_names, "_[1|2]\\.fq\\.gz", "")
-    fastq_ids <- str_replace(fastq_ids, ".*_", "")
-
-    all_fastqs$specimenID[missing_inds] <- paste0(fastq_ids, "lh")
-
   } else if (study == "UCI_Clu-h2kbKI") {
     # Fastqs for specimenID "12680lc" are in a folder marked "Deprecated" and
     # should be excluded. There are 8 more fastq files in that folder for 4
