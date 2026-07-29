@@ -31,14 +31,22 @@ library(synapser)
 library(stringr)
 library(dplyr)
 
-source("util_functions.R")
+source(file.path("functions", "util_functions.R"))
 
 staging_syn_ids <- config::get("staging_syn_ids")
 studies <- config::get("studies")
 
-synLogin(silent = TRUE)
+github_link <- paste0(config::get("github_repo_url"),
+                      "/blob/main/02_Harmonize_Metadata.R")
+
+
+metadata_folder <- file.path("output", "metadata")
+dir.create(metadata_folder, showWarnings = FALSE)
+
 tmp_dir <- file.path("output", "tmp")
 dir.create(tmp_dir, showWarnings = FALSE)
+
+synLogin(silent = TRUE)
 
 metadata_list <- read.csv(file.path("data", "Model_AD_SynID_list.csv"),
                           comment.char = "#") |>
@@ -49,7 +57,7 @@ stopifnot(all(studies %in% metadata_list$Study))
 
 # Process each study's metadata ------------------------------------------------
 
-metadata <- lapply(1:nrow(metadata_list), function(N) {
+for (N in 1:nrow(metadata_list)) {
   row <- metadata_list[N, ]
   print(row$Study)
 
@@ -106,14 +114,6 @@ metadata <- lapply(1:nrow(metadata_list), function(N) {
     assay_df$specimenID <- str_replace(assay_df$specimenID, "H", "rh")
     assay_df$specimenID <- str_replace(assay_df$specimenID, "C", "rc")
 
-  } else if (row$Study == "UCI_hAbeta_KI") {
-    # UCI_hAbeta_KI: Some platform entries are mis-labeled as NextSeq501,
-    # NextSeq502, or NextSeq503 when they should all be NextSeq500. The
-    # biospecimen metadata file is missing the "samplingAge" column.
-    assay_df$platform <- str_replace(assay_df$platform,
-                                     "NextSeq50[1|2|3]",
-                                     "NextSeq500")
-    biospec_df$samplingAge <- NA
   }
 
   # Studies Jax.IU.Pitt_5XFAD, Jax.IU.Pitt_APOE4.Trem2.R47H, Jax.IU.Pitt_LOAD2,
@@ -121,8 +121,9 @@ metadata <- lapply(1:nrow(metadata_list), function(N) {
   # UCI_Trem2_Cuprizone, and UCI_Trem2-R47H_NSS need no specialized corrections
   # in this section
 
-  # General corrections -- remove any rows with NA or "" IDs. Some files have
-  # empty rows at the end.
+  ## General corrections -------------------------------------------------------
+
+  # Remove any rows with NA or "" IDs. Some files have empty rows at the end.
   assay_df <- subset(assay_df,
                      !is.na(specimenID) & nchar(specimenID) > 0)
   biospec_df <- subset(biospec_df,
@@ -171,7 +172,7 @@ metadata <- lapply(1:nrow(metadata_list), function(N) {
   )
 
 
-  ## Create final study-specific data frame ------------------------------------
+  ## Create clean data frame ---------------------------------------------------
 
   # Filter to columns of interest and ensure that all columns are in the same
   # order across all studies. Also make sure all rows are unique (some studies
@@ -187,89 +188,75 @@ metadata <- lapply(1:nrow(metadata_list), function(N) {
       platform, RIN, rnaBatch, libraryBatch, sequencingBatch
     ) |>
     distinct()
-  return(combined_df)
-})
-
-# Bind into one data frame so we can make genotype changes all at once
-metadata_combined <- do.call(rbind, metadata)
 
 
-# Fixes to genotype names ------------------------------------------------------
+  ## Fixes to genotype names ---------------------------------------------------
 
-# Standardize all genotypes to the MODEL-AD approved values.
-geno_map <- c(
-  "3xTg-AD_homozygous" = "3xTg-AD_carrier",
-  "3XTg-AD_noncarrier" = "3xTg-AD_noncarrier",
-  "5XFAD_hemizygous" = "5XFAD_carrier",
-  "APOE_" = "APOE4-KI_",
-  "BIN1" = "Bin1",
-  "Homozygous" = "homozygous",
-  "Heterozygous" = "heterozygous",
-  "TREM2_" = "Trem2-R47H_",
-  "NA_Inconclusive" = NA,
-  # Not relevant to set of studies used for analysis but saving for
-  # reproducibility.
-  "Abca7_V1599M_homozygous" = "Abca7-V1599M_homozygous",
-  "Abca7V1599M_noncarrier" = "Abca7-V1599M_WT",
-  "ABI3_S209F_homozygous" = "Abi3-S209F_homozygous",
-  "ABI3_S209F_noncarrier" = "Abi3-S209F_WT",
-  "BIN1_K358R_noncarrier" = "Bin1-K358R_WT",
-  "hABKI  HO" = "hAbeta-KI_LoxP_homozygous",
-  "hABKI  WT" = "hAbeta-KI_LoxP_WT",
-  "NA; NA" = NA,
-  "PICALM_H458R_homozygous" = "Picalm-H458R_homozygous",
-  "PICALM_H458R_noncarrier" = "Picalm-H458R_WT",
-  "SPI1_homozygous" = "Spi1-rs1377416_homozygous",
-  "SPI1_noncarrier" = "Spi1-rs1377416_WT",
-  "Trem2_R47H_homozygous" = "Trem2-R47H_homozygous",
-  "Trem2_R47H_noncarrier" = "Trem2-R47H_WT",
-  "TREM2R47H_heterozygous" = "Trem2-R47H_heterozygous",
-  "TREM2R47H_homozygous" = "Trem2-R47H_homozygous",
-  "TREM2R47H_noncarrier" = "Trem2-R47H_WT"
-)
+  # Standardize all genotypes to the MODEL-AD approved values.
+  geno_map <- c(
+    "3xTg-AD_homozygous" = "3xTg-AD_carrier",
+    "3XTg-AD_noncarrier" = "3xTg-AD_noncarrier",
+    "5XFAD_hemizygous" = "5XFAD_carrier",
+    "APOE_" = "APOE4-KI_",
+    "BIN1" = "Bin1",
+    "Homozygous" = "homozygous",
+    "Heterozygous" = "heterozygous",
+    "TREM2_" = "Trem2-R47H_",
+    "NA_Inconclusive" = NA,
+    # Not relevant to set of studies used for analysis but saving for
+    # reproducibility.
+    "Abca7_V1599M_homozygous" = "Abca7-V1599M_homozygous",
+    "Abca7V1599M_noncarrier" = "Abca7-V1599M_WT",
+    "ABI3_S209F_homozygous" = "Abi3-S209F_homozygous",
+    "ABI3_S209F_noncarrier" = "Abi3-S209F_WT",
+    "BIN1_K358R_noncarrier" = "Bin1-K358R_WT",
+    "hABKI  HO" = "hAbeta-KI_LoxP_homozygous",
+    "hABKI  WT" = "hAbeta-KI_LoxP_WT",
+    "NA; NA" = NA,
+    "PICALM_H458R_homozygous" = "Picalm-H458R_homozygous",
+    "PICALM_H458R_noncarrier" = "Picalm-H458R_WT",
+    "SPI1_homozygous" = "Spi1-rs1377416_homozygous",
+    "SPI1_noncarrier" = "Spi1-rs1377416_WT",
+    "Trem2_R47H_homozygous" = "Trem2-R47H_homozygous",
+    "Trem2_R47H_noncarrier" = "Trem2-R47H_WT",
+    "TREM2R47H_heterozygous" = "Trem2-R47H_heterozygous",
+    "TREM2R47H_homozygous" = "Trem2-R47H_homozygous",
+    "TREM2R47H_noncarrier" = "Trem2-R47H_WT"
+  )
 
-for (G in 1:length(geno_map)) {
-  metadata_combined$genotype <- str_replace_all(metadata_combined$genotype,
-                                                names(geno_map)[G],
-                                                geno_map[G])
-}
+  for (G in 1:length(geno_map)) {
+    combined_df$genotype <- str_replace_all(combined_df$genotype,
+                                            names(geno_map)[G],
+                                            geno_map[G])
+  }
 
-# Genotypes should be semicolon-separated, not comma-separated
-metadata_combined$genotype <- str_replace(metadata_combined$genotype, ",", ";")
+  # Genotypes should be semicolon-separated, not comma-separated
+  combined_df$genotype <- str_replace(combined_df$genotype, ",", ";")
 
-# Standardize genotypeBackground values
-metadata_combined <- metadata_combined |>
-  mutate(genotypeBackground = case_match(
-    genotypeBackground,
-    c("B6", "C57BL6J")  ~ "C57BL/6J",
-    "C57BL/6J, LOAD1" ~ "C57BL/6J; LOAD1",
-    .default = genotypeBackground
-  ))
+  # Standardize genotypeBackground values
+  combined_df <- combined_df |>
+    mutate(genotypeBackground = case_match(
+      genotypeBackground,
+      c("B6", "C57BL6J")  ~ "C57BL/6J",
+      "C57BL/6J, LOAD1" ~ "C57BL/6J; LOAD1",
+      .default = genotypeBackground
+    ))
 
+  # TODO the genotype names for LOAD2 Primary Screen may not be in the right format
 
-# TODO the genotype names for LOAD2 Primary Screen may not be in the right format
+  ## Save to file and upload to Synapse ----------------------------------------
 
-
-# Save to files and upload to Synapse ------------------------------------------
-
-dir.create(file.path("output", "metadata"), showWarnings = FALSE)
-
-# Split the metadata up by study and write to individual files
-for (study_name in unique(metadata_combined$study)) {
-  study_data <- subset(metadata_combined, study == study_name)
-  study_file <- file.path("output", "metadata",
+  study_name <- row$Study
+  study_file <- file.path(metadata_folder,
                           paste0(study_name, "_harmonized_metadata.csv"))
 
-  write.csv(study_data, study_file, row.names = FALSE, quote = FALSE)
+  write.csv(combined_df, study_file, row.names = FALSE, quote = FALSE)
 
   # Upload to Staging. syn_safe_upload ensures the file will only get uploaded
   # if it doesn't already have an identical version somewhere on Synapse
   all_syn_ids <- subset(metadata_list, Study == study_name) |>
     select(-Study) |>
     as.character()
-
-  github_link <- paste0(config::get("github_repo_url"),
-                        "/blob/main/02_Harmonize_Metadata.R")
 
   new_file <- syn_safe_upload(study_file,
                               parent_id = staging_syn_ids$metadata,

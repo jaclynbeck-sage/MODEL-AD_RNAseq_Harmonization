@@ -5,8 +5,8 @@ library(stringr)
 library(purrr)
 library(ggplot2)
 
-source("validation_functions.R")
-source("util_functions.R")
+source(file.path("functions", "validation_functions.R"))
+source(file.path("functions", "util_functions.R"))
 
 # Set up -----------------------------------------------------------------------
 

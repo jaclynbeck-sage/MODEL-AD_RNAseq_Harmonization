@@ -22,7 +22,7 @@ library(synapser)
 library(synapserutils)
 library(stringr)
 
-source("util_functions.R")
+source(file.path("functions", "util_functions.R"))
 
 staging_syn_ids <- config::get("staging_syn_ids")
 studies <- config::get("studies")

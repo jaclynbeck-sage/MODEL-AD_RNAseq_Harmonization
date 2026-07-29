@@ -5,7 +5,7 @@ library(ggplot2)
 library(stringr)
 library(vsn)
 
-source("util_functions.R")
+source(file.path("functions", "util_functions.R"))
 
 # TODO check diff expression against the genes found in benchmarking that changed
 # between reference genomes

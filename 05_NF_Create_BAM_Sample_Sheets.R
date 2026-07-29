@@ -17,11 +17,15 @@ library(synapser)
 library(stringr)
 library(dplyr)
 
-source("util_functions.R")
+source(file.path("functions", "util_functions.R"))
 
 file_syn_ids <- config::get("file_syn_ids")
 staging_syn_ids <- config::get("staging_syn_ids")
 studies <- config::get("studies")
+
+
+github_link <- paste0(config::get("github_repo_url"),
+                      "/blob/main/05_NF_Create_BAM_Sample_Sheets.R")
 
 synLogin(silent = TRUE)
 tmp_dir <- file.path("output", "tmp")
@@ -105,9 +109,6 @@ for (study in studies) {
   used_ids <- paste(provenance$id,
                     provenance$versionNumber,
                     sep = ".")
-
-  github_link <- paste0(config::get("github_repo_url"),
-                        "/blob/main/05_NF_Create_BAM_Sample_Sheets.R")
 
   syn_file <- syn_safe_upload(samplesheet_filename,
                               parent_id = staging_syn_ids$nf_samplesheets,

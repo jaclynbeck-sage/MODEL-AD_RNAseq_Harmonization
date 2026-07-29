@@ -169,6 +169,7 @@ pad <- function(config_name, id, path) {
   str_glue("{base_string} \"{id}\"  # {path}")
 }
 
+# Staging folder IDs
 staging <- sapply(1:nrow(all_folders), function(N) {
   row <- all_folders[N, ]
   pad(row$config_name, row$id, row$path)
@@ -207,14 +208,10 @@ close(cfg_file)
 # The new IDs should be auto-pulled into the main config now
 staging_ids <- config::get("staging_syn_ids")
 
+# Create study folders for BAM files, raw counts, QC data, and genotype validation
 for (study_name in studies_to_add) {
-  # Folder for BAM files
   bams <- create_folder(study_name, parent_id = staging_ids$bam_files)
-
-  # Folder + sub-folders for raw counts files
   counts <- create_folder(study_name, parent_id = staging_ids$raw_gene_counts)
   qc <- create_folder(study_name, parent_id = staging_ids$quality_control)
-
-  # Folder for genotype validation
   geno <- create_folder(study_name, parent_id = staging_ids$genotype_validation)
 }

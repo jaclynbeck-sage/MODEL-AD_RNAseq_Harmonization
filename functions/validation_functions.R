@@ -296,7 +296,7 @@ validate_Picalm <- function() {
 
 # Validate the presence or absence of Trem2 KO by expression of Trem2.
 validate_Trem2_KO <- function(metadata, counts, symbol_map) {
-  counts_df <- make_counts_df(metadata, counts, symbol_map, "Trem2") %>%
+  counts_df <- make_counts_df(metadata, counts, symbol_map, "Trem2") |>
     # Threshold chosen by examination of plot of expression vs genotype
     mutate(expr_trem2 = Trem2 > 7,
            valid = (genotype == "Trem2-KO" & !expr_trem2) |
