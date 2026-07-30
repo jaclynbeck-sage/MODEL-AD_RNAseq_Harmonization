@@ -1,3 +1,5 @@
+# Printing functions -----------------------------------------------------------
+
 # Given a data frame of samples with genotype variant mismatches, print out this
 # information grouped by carrier/non-carrier status.
 print_variant_mismatches <- function(var_mismatches, genotype_name) {
@@ -48,6 +50,146 @@ print_expression_mismatches <- function(mismatch_df, genotype_name, genes) {
 }
 
 
+# Utility functions ------------------------------------------------------------
+
+# Bin quality scores from VCF files into "deletion", "low", "moderate", or
+# "high" to help determine how reliable a detection is. Values of exactly 0
+# were added by this code to indicate that no variant was detected at all.
+score_quality <- function(quality) {
+  case_when(
+    is.na(quality) ~ "deletion",
+    quality == 0 ~ "none",
+    quality > 0 & quality < 20 ~ "low",
+    quality >= 20 & quality < 100 ~ "moderate",
+    quality >= 100 ~ "high"
+  )
+}
+
+
+# Get a data frame with specific genes, merged with metadata. Adds one column
+# per gene in "genes", with the column name being the gene symbol and the
+# values being expression.
+make_counts_df <- function(metadata, counts, symbol_map, genes) {
+  genes_sub <- subset(symbol_map, gene_symbol %in% genes)
+  rownames(genes_sub) <- genes_sub$ensembl_gene_id
+
+  counts_sub <- counts[genes_sub$ensembl_gene_id, ]
+  rownames(counts_sub) <- genes_sub[rownames(counts_sub), "gene_symbol"]
+
+  counts_df <- as.data.frame(t(counts_sub)) |>
+    merge(metadata, by.x = "row.names", by.y = "unique_specimenID") |>
+    dplyr::rename(unique_specimenID = Row.names)
+}
+
+
+# Given a set of metadata and the variant detections for each sample, determine
+# whether the genotype in the metadata matches the estimated genotype based on
+# detected variants.
+#
+# Arguments:
+#   metadata - data frame with one row per sample, which contains each mouse's
+#     genotype. It is assumed that this data frame contains only the samples
+#     we are validating and not all samples from all studies.
+#   geno_info - a data frame with all variants detected in all samples. Samples
+#     with no detected variants are not in this data frame
+#   genotype_pattern - a regex used to grep for the "carrier" genotype, which
+#     should only match genotypes that contain the modified gene and not any
+#     wild-type genotypes.
+#   mutation_match - optional, the name of the mutation(s) from the intervals.bed
+#     file that should be included in this check. If NULL, the mutations are
+#     selected using gene_symbol_match only. At least one of these two fields
+#     should be non-NULL. mutation_match is typically used if there is only one
+#     mutation for a given gene that is relevant to these samples (e.g. looking
+#     at only the Trem2-R47H variant and not other variants for Trem2 in the
+#     intervals file.)
+#   gene_symbol_match - optional, the gene symbol of the mutation(s) that should
+#     be included in this check. If NULL, the mutations are selected using
+#     mutation_match only. At least one of these two fields should be non-NULL.
+#     gene_symbol_match is typically used if there is more than one variant for
+#     a gene and all variants should be included (e.g. all APP variants for
+#     5xFAD mice).
+#   total_positions - the number of expected genome positions where variants
+#     should be detected in a "carrier" sample. This number should be the total
+#     over all expected variants covered by mutation_match or gene_symbol_match.
+#   rm_deletions - if the variants being judged are NOT deletions, any detected
+#     deletions are probably false positives and are not counted toward the
+#     number of variants detected in a sample.
+get_variant_mismatches <- function(metadata, geno_info, genotype_pattern,
+                                   mutation_match = NULL,
+                                   gene_symbol_match = NULL,
+                                   total_positions = 0,
+                                   rm_deletions = TRUE) {
+
+  # Subset to only variants for the specific gene or mutation specified, add
+  # samples with no detected variants, then count the total number of detected
+  # variants for each sample
+  geno_sub <- geno_info |>
+    subset(unique_specimenID %in% metadata$unique_specimenID) |>
+    subset(gene_symbol %in% gene_symbol_match | mutation %in% mutation_match) |>
+
+    # Change deletions to "none" if rm_deletions is TRUE, so they are not
+    # counted below
+    mutate(evidence = ifelse(rm_deletions & evidence == "deletion",
+                             "none",
+                             evidence)) |>
+
+    # Summarize across all variants for each sample
+    group_by(study, unique_specimenID, specimenID) |>
+
+    # Count only variants with "moderate", "high", or (optionally) "deletion"
+    # evidence / quality as detections. Keep track of average quality for debug
+    # purposes.
+    summarize(
+      total_found = sum(evidence != "low" & evidence != "none"),
+      avg_quality = mean(quality, na.rm = TRUE),
+      evidence = paste(sort(unique(evidence)), collapse = ", "),
+      .groups = "drop"
+    ) |>
+
+    # Merge with metadata to insert samples that don't exist in geno_sub
+    # post-filtering (e.g. samples with no detected variants for this gene /
+    # mutation), and to get the reported genotype
+    merge(metadata, all.y = TRUE) |>
+
+    # Determine genotype
+    mutate(
+      # Fill in NA evidence and total_found values from the merge
+      evidence = ifelse(is.na(evidence), "none", evidence),
+      total_found = ifelse(is.na(total_found), 0, total_found),
+
+      # Mark which samples should have variants based on their reported genotype
+      is_carrier = grepl(genotype_pattern, genotype),
+
+      # Estimate genotype based on variants
+      est_genotype = case_when(
+        total_found >= total_positions ~ "carrier",
+        total_found == 0 & evidence == "none" ~ "noncarrier",
+        .default = "ambiguous"
+      )
+    )
+
+  return(geno_sub)
+}
+
+
+# Merge two data frames that may have one or both of "valid_variant" and
+# "valid_expression" columns. If they both have the same column, the merge creates
+# new columns called "<col_name>.x" and "<col_name>.y". The values for .x and .y
+# are combined with "&" so the final column is TRUE only if both .x and .y are TRUE.
+# .x and .y columns are removed so there is only a single valid_variant and
+# valid_expression column.
+merge_validation_dfs <- function(df1, df2) {
+  merged <- merge(df1, df2, by = "unique_specimenID") |>
+    mutate(
+      valid_variant = reduce(pick(starts_with("valid_variant")), `&`),
+      valid_expression = reduce(pick(starts_with("valid_expression")), `&`)
+    ) |>
+    select(-ends_with(".x"), -ends_with(".y"))
+}
+
+
+# Genotype validation functions ------------------------------------------------
+
 # Validate the presence or absence of APP-SweM671L / APP-SweK670N variants, and
 # expression of human APP and MAPT in 3xTg-AD mice. The Psen1-M146V variant
 # is not reliably detected in 3xTg-AD_carrier mice, so it is excluded from the
@@ -61,7 +203,7 @@ validate_3x <- function(metadata, geno_calls, counts, symbol_map,
     total_positions = 2
   ) |>
     mutate(
-      valid_3x_variant = (is_carrier & est_genotype == "carrier") |
+      valid_variant = (is_carrier & est_genotype == "carrier") |
         (!is_carrier & est_genotype != "carrier")
     )
 
@@ -72,22 +214,19 @@ validate_3x <- function(metadata, geno_calls, counts, symbol_map,
     # an "or" operation here.
     mutate(expr_3x = APP > 1 | MAPT > 1,
            is_carrier = grepl(genotype_pattern, genotype),
-           valid_3x_expression = (is_carrier & expr_3x) | (!is_carrier & !expr_3x))
+           valid_expression = (is_carrier & expr_3x) | (!is_carrier & !expr_3x))
 
   # Combine the two results
-  final <- merge(valid_variants, counts_df) |>
-    mutate(valid = valid_3x_variant & valid_3x_expression)
+  final <- merge(valid_variants, counts_df)
 
   # Print any mismatches
-  var_mismatches <- subset(valid_variants, !valid_3x_variant)
-  print_variant_mismatches(var_mismatches, "3xTg-AD")
+  print_variant_mismatches(subset(valid_variants, !valid_variant), "3xTg-AD")
 
-  count_mismatches <- subset(counts_df, !valid_3x_expression) |>
+  count_mismatches <- subset(counts_df, !valid_expression) |>
     select(study, specimenID, unique_specimenID, genotype, expr_3x, APP, MAPT)
   print_expression_mismatches(count_mismatches, "3xTg-AD")
 
-  return(list(valid = select(final, unique_specimenID, valid),
-              detail = select(final, -valid)))
+  return(final)
 }
 
 
@@ -111,7 +250,7 @@ validate_5x <- function(metadata, geno_calls, counts, symbol_map,
     total_positions = 5 # pass with 5 of 6 positions
   ) |>
     mutate(
-      valid_5x_variant = (is_carrier & est_genotype == "carrier") |
+      valid_variant = (is_carrier & est_genotype == "carrier") |
              (!is_carrier & est_genotype != "carrier")
     )
 
@@ -123,23 +262,20 @@ validate_5x <- function(metadata, geno_calls, counts, symbol_map,
     # human APP in many WT samples, even those from studies unrelated to 5XFAD.
     mutate(expr_5x = APP > 1 & PSEN1 > 1,
            is_carrier = grepl(genotype_pattern, genotype),
-           valid_5x_expression = (is_carrier & expr_5x) | (!is_carrier & !expr_5x))
+           valid_expression = (is_carrier & expr_5x) | (!is_carrier & !expr_5x))
 
   # Combine the two data frames
-  final <- merge(valid_variants, counts_df) |>
-    mutate(valid = valid_5x_variant & valid_5x_expression)
+  final <- merge(valid_variants, counts_df)
 
   # Print any mismatches
-  var_mismatches <- subset(valid_variants, !valid_5x_variant)
-  print_variant_mismatches(var_mismatches, "5XFAD")
+  print_variant_mismatches(subset(valid_variants, !valid_variant), "5XFAD")
 
-  count_mismatches <- subset(counts_df, !valid_5x_expression) |>
+  count_mismatches <- subset(counts_df, !valid_expression) |>
     select(study, specimenID, unique_specimenID, genotype, expr_5x, APP, PSEN1)
 
   print_expression_mismatches(count_mismatches, "5XFAD")
 
-  return(list(valid = select(final, unique_specimenID, valid),
-              detail = select(final, -valid)))
+  return(final)
 }
 
 
@@ -163,17 +299,15 @@ validate_APOE4_KI <- function(metadata, counts, symbol_map,
                               genotype_pattern = "APOE4-KI_(homo|hetero)") {
   counts_df <- make_counts_df(metadata, counts, symbol_map, "APOE") |>
     mutate(apoe_geno = grepl(genotype_pattern, genotype),
-           valid_apoe4_expression = (apoe_geno & APOE > 20) | (!apoe_geno & APOE < 2),
-           valid = valid_apoe4_expression)
+           valid_expression = (apoe_geno & APOE > 20) | (!apoe_geno & APOE < 2))
 
   # Print any mismatches
-  count_mismatches <- subset(counts_df, !valid_apoe4_expression) |>
+  count_mismatches <- subset(counts_df, !valid_expression) |>
     select(study, specimenID, unique_specimenID, genotype, APOE)
 
   print_expression_mismatches(count_mismatches, "APOE4-KI")
 
-  return(list(valid = select(counts_df, unique_specimenID, valid),
-              detail = select(counts_df, -valid)))
+  return(counts_df)
 }
 
 
@@ -186,15 +320,13 @@ validate_Abca7 <- function(metadata, geno_calls,
                                            genotype_pattern = genotype_pattern,
                                            mutation_match = "Abca7-V1613M",
                                            total_positions = 3) |>
-    mutate(valid = (is_carrier & est_genotype == "carrier") |
+    mutate(valid_variant = (is_carrier & est_genotype == "carrier") |
              (!is_carrier & est_genotype != "carrier"))
 
   # Print any mismatches
-  var_mismatches <- subset(valid_variants, !valid)
-  print_variant_mismatches(var_mismatches, "Abca7-V1599M")
+  print_variant_mismatches(subset(valid_variants, !valid_variant), "Abca7-V1599M")
 
-  return(list(valid = select(valid_variants, unique_specimenID, valid),
-              detail = valid_variants))
+  return(valid_variants)
 }
 
 
@@ -211,14 +343,12 @@ validate_Abi3 <- function(metadata, geno_calls,
                                            genotype_pattern = genotype_pattern,
                                            mutation_match = "Abi3-S212F",
                                            total_positions = 3) |>
-    mutate(valid = is_carrier | # carriers pass even if variant not detected
+    mutate(valid_variant = is_carrier | # carriers pass even if variant not detected
              (!is_carrier & est_genotype != "carrier"))
 
-  var_mismatches <- subset(valid_variants, !valid)
-  print_variant_mismatches(var_mismatches, "Abi3-S209F")
+  print_variant_mismatches(subset(valid_variants, !valid_variant), "Abi3-S209F")
 
-  return(list(valid = select(valid_variants, unique_specimenID, valid),
-              detail = valid_variants))
+  return(valid_variants)
 }
 
 
@@ -232,15 +362,13 @@ validate_Bin1 <- function(metadata, geno_calls, counts, symbol_map,
     total_positions = 3
   ) |>
     mutate(
-      valid = (is_carrier & est_genotype == "carrier") |
+      valid_variant = (is_carrier & est_genotype == "carrier") |
         (!is_carrier & est_genotype != "carrier")
     )
 
-  var_mismatches <- subset(valid_variants, !valid)
-  print_variant_mismatches(var_mismatches, "UCI_Bin1K358R")
+  print_variant_mismatches(subset(valid_variants, !valid_variant), "UCI_Bin1K358R")
 
-  return(list(valid = select(valid_variants, unique_specimenID, valid),
-              detail = valid_variants))
+  return(valid_variants)
 }
 
 
@@ -254,16 +382,15 @@ validate_CLU_KI <- function(metadata, counts, symbol_map,
     # it at 0.12 CPM, but we use 1 just to be safe.
     mutate(expr_clu = CLU > 1,
            is_carrier = grepl(genotype_pattern, genotype),
-           valid = (is_carrier & expr_clu) |
+           valid_expression = (is_carrier & expr_clu) |
              (!is_carrier & !expr_clu))
 
-  count_mismatches <- subset(counts_df, !valid) |>
+  count_mismatches <- subset(counts_df, !valid_expression) |>
     select(study, specimenID, unique_specimenID, genotype, expr_clu, CLU)
 
   print_expression_mismatches(count_mismatches, "CLU-KI")
 
-  return(list(valid = select(counts_df, unique_specimenID, valid),
-              detail = counts_df))
+  return(counts_df)
 }
 
 
@@ -277,15 +404,12 @@ validate_hAbeta_KI <- function(metadata, geno_calls,
                                            genotype_pattern = genotype_pattern,
                                            mutation_match = "App-KI",
                                            total_positions = 3) |>
-    mutate(valid_hAbeta_variant = (is_carrier & est_genotype == "carrier")  |
-             (!is_carrier & est_genotype != "carrier"),
-           valid = valid_hAbeta_variant)
+    mutate(valid_variant = (is_carrier & est_genotype == "carrier")  |
+             (!is_carrier & est_genotype != "carrier"))
 
-  var_mismatches <- subset(valid_variants, !valid)
-  print_variant_mismatches(var_mismatches, "hAbeta-KI")
+  print_variant_mismatches(subset(valid_variants, !valid_variant), "hAbeta-KI")
 
-  return(list(valid = select(valid_variants, unique_specimenID, valid),
-              detail = select(valid_variants, -valid)))
+  return(valid_variants)
 }
 
 
@@ -299,16 +423,15 @@ validate_Trem2_KO <- function(metadata, counts, symbol_map) {
   counts_df <- make_counts_df(metadata, counts, symbol_map, "Trem2") |>
     # Threshold chosen by examination of plot of expression vs genotype
     mutate(expr_trem2 = Trem2 > 7,
-           valid = (genotype == "Trem2-KO" & !expr_trem2) |
+           valid_expression = (genotype == "Trem2-KO" & !expr_trem2) |
              (genotype != "Trem2-KO" & expr_trem2))
 
-  count_mismatches <- subset(counts_df, !valid) |>
+  count_mismatches <- subset(counts_df, !valid_expression) |>
     select(study, specimenID, unique_specimenID, genotype, expr_trem2, Trem2)
 
   print_expression_mismatches(count_mismatches, "Trem2-KO")
 
-  return(list(valid = select(counts_df, unique_specimenID, valid),
-              detail = counts_df))
+  return(counts_df)
 }
 
 
@@ -328,13 +451,10 @@ validate_Trem2_R47H <- function(metadata, geno_calls,
                                            genotype_pattern = genotype_pattern,
                                            mutation_match = "Trem2-R47H",
                                            total_positions = 1) |>
-    mutate(valid_trem2_r47h_variant = is_carrier | # carriers always pass
-             (!is_carrier & est_genotype != "carrier"),
-           valid = valid_trem2_r47h_variant)
+    mutate(valid_variant = is_carrier | # carriers always pass
+             (!is_carrier & est_genotype != "carrier"))
 
-  var_mismatches <- subset(valid_variants, !valid_trem2_r47h_variant)
-  print_variant_mismatches(var_mismatches, "Trem2-R47H")
+  print_variant_mismatches(subset(valid_variants, !valid_variant), "Trem2-R47H")
 
-  return(list(valid = select(valid_variants, unique_specimenID, valid),
-              detail = select(valid_variants, -valid)))
+  return(valid_variants)
 }
