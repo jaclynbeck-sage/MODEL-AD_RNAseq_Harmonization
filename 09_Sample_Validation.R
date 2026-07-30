@@ -3,9 +3,9 @@ library(synapserutils)
 library(dplyr)
 library(stringr)
 library(purrr)
-library(ggplot2)
 
 source(file.path("functions", "validation_functions.R"))
+source(file.path("functions", "plotting_functions.R"))
 source(file.path("functions", "util_functions.R"))
 
 # Set up -----------------------------------------------------------------------
@@ -20,23 +20,6 @@ github <- paste0(config::get("github_repo_url"),
 
 tmp_dir <- file.path("output", "tmp")
 dir.create(tmp_dir, showWarnings = FALSE)
-
-
-# Utility functions ------------------------------------------------------------
-
-
-reformat_details <- function(details_df, symbol_map) {
-  details_df <- details_df |>
-    select(study, unique_specimenID, genotype,
-           any_of(c("total_found", symbol_map$gene_symbol)),
-           matches("valid_.*_variant"), matches("valid_.*_expression"))
-
-  if ("total_found" %in% colnames(details_df)) {
-    details_df <- dplyr::rename(details_df, total_variants_found = total_found)
-  }
-
-  return(details_df)
-}
 
 
 # Load counts and metadata -----------------------------------------------------
@@ -96,6 +79,7 @@ intervals <- read.delim(intervals_file$path, header = FALSE) |>
           mutation = mutation,
           position = (start+1):(end-1))
 
+
 # Load VCF files ---------------------------------------------------------------
 
 # Find the combined VCF files on Synapse
@@ -133,63 +117,23 @@ names(valid_samples_list) <- unique(metadata_all$study)
 
 # Validation of mouse sex ------------------------------------------------------
 
-xy_df <- make_counts_df(metadata_all, counts, symbol_map,
-                        c("Xist", "Eif2s3y", "Ddx3y", "Kdm5d")) |>
-  # Use a small threshold for Xist for females -- there is one sample that
-  # expresses near-zero counts of both Y-genes and Xist.
-  mutate(
-    # Take the geometric mean (log-scale), including a pseudocount
-    mean_y = rowMeans(log(cbind(Eif2s3y, Ddx3y, Kdm5d) + 0.5)),
-    mean_y = exp(mean_y) - 0.5,
-    # Expression of Y-related genes should be zero for females, so we use
-    # anything > 1 CPM for males and assume < 1 CPM might be noise.
-    est_male = mean_y >= 1,
-    est_female = Xist > 10 & mean_y < 1
-  )
-
-# Mark valid/invalid conditions
-xy_df$valid_sex <- FALSE
-xy_df$valid_sex[xy_df$sex == "female" &
-                  xy_df$est_female == TRUE &
-                  xy_df$est_male == FALSE] <- TRUE
-xy_df$valid_sex[xy_df$sex == "male" &
-                  xy_df$est_female == FALSE &
-                  xy_df$est_male == TRUE] <- TRUE
+sex_matches <- validate_sex(metadata_all, counts, symbol_map)
 
 # Linear scale
-ggplot(xy_df, aes(x = Xist, y = mean_y, color = sex)) +
+ggplot(sex_matches, aes(x = Xist, y = mean_y, color = sex)) +
   geom_point() +
   geom_hline(yintercept = 1, linewidth = 0.5, color = "orange") +
   theme_bw() +
   facet_wrap(~study)
 
 # Log scale - Adding pseudocount to avoid inf values
-ggplot(xy_df, aes(x = log2(Xist+0.5), y = log2(mean_y+0.5), color = sex)) +
+ggplot(sex_matches, aes(x = log2(Xist+0.5), y = log2(mean_y+0.5), color = sex)) +
   geom_point() +
   geom_hline(yintercept = log2(1.5), linewidth = 0.5, color = "orange") +
   theme_bw() +
   facet_wrap(~study)
 
-# Mark valid samples in the data frame
-sex_matches <- select(xy_df, unique_specimenID, valid_sex)
-
-# For printing
-mismatches <- subset(xy_df, !valid_sex) |>
-  select(study, individualID, specimenID, sex, est_female, est_male,
-         Xist, Eif2s3y, Ddx3y, Kdm5d, mean_y) |>
-  dplyr::rename(reported_sex = sex) |>
-  mutate(across(c(Xist, Ddx3y, Eif2s3y, Kdm5d, mean_y), ~ round(.x, 2)))
-
-mismatches$est_sex <- "unknown"
-mismatches$est_sex[mismatches$est_female & !mismatches$est_male] <- "female"
-mismatches$est_sex[mismatches$est_male & !mismatches$est_female] <- "male"
-
-cat("*** Sex verification ***", "\n", "\n")
-cat(paste(nrow(mismatches), "samples have mismatched sex:"), "\n")
-print(select(mismatches, study, specimenID, reported_sex, est_sex,
-             Xist, Eif2s3y, Ddx3y, Kdm5d, mean_y))
-cat("", "\n\n")
-
+# NOTE:
 # The two Jax.IU.Pitt_LOAD2.PrimaryScreen samples that fail (both female) have a
 # mean_y of 3.64 and 11.06, which is much lower than male samples but higher
 # than all other female samples. These samples also express a small amount of
@@ -201,6 +145,7 @@ cat("", "\n\n")
 # CPM mean_y but it's unclear. These samples don't fail expression or variant
 # checks.
 
+
 # Validation of mouse genotype -------------------------------------------------
 
 ## Jax.IU.Pitt_5XFAD and UCI_5XFAD ---------------------------------------------
@@ -211,35 +156,16 @@ meta_5x <- subset(metadata_all,
 
 valid_5x <- validate_5x(meta_5x, geno_info, counts, symbol_map)
 
-# TODO temporarily duplicated data
-valid_samples_list[["Jax.IU.Pitt_5XFAD"]] <- valid_5x
-valid_samples_list[["UCI_5XFAD"]] <- valid_5x
+valid_samples_list[["Jax.IU.Pitt_5XFAD"]] <- subset(valid_5x, study == "Jax.IU.Pitt_5XFAD")
+valid_samples_list[["UCI_5XFAD"]] <- subset(valid_5x, study == "UCI_5XFAD")
 
-# Tmp PCA
-
-counts_5x <- log2(counts[, meta_5x$unique_specimenID] + 0.5)
-
+# PCA
 for (study_name in unique(meta_5x$study)) {
-  meta_study <- subset(meta_5x, study == study_name) |>
-    merge(valid_5x)
-  vars <- matrixStats::rowVars(as.matrix(counts_5x[, meta_study$unique_specimenID]))
-  hv <- names(sort(vars, decreasing = TRUE))[1:2000]
-  pc <- prcomp(t(counts_5x[hv, meta_study$unique_specimenID]))
-  pc_plot <- merge(pc$x[, c("PC1", "PC2")], meta_study, by.x = "row.names",
-                   by.y = "unique_specimenID") |>
-    dplyr::rename(unique_specimenID = Row.names) |>
-    mutate(
-      has_5x = grepl("5XFAD_carrier", genotype),
-      mismatch_type = case_when(
-        valid_variant & valid_expression ~ "none",
-        valid_variant & !valid_expression ~ "expression",
-        !valid_variant & valid_expression ~ "variant",
-        !valid_variant & !valid_expression ~ "expression + variant"
-      )
-    )
-  plt <- ggplot(pc_plot, aes(x = PC1, y = PC2, color = mismatch_type, shape = has_5x)) +
-    geom_point() + ggtitle(study_name)
-  print(plt)
+  pc_plot <- calculate_pca(subset(valid_5x, study == study_name), counts,
+                           "5XFAD_carrier") |>
+    dplyr::rename(has_5x = has_mutation)
+
+  plot_pc_grid(pc_plot, study_name, "has_5x")
 }
 
 # NOTE: GT19_12887 (non-carrier) from Jax 5X study has all 6 variants detected
@@ -262,49 +188,12 @@ valid_all <- merge_validation_dfs(valid_apoe, valid_trem2)
 
 valid_samples_list[["Jax.IU.Pitt_APOE4.Trem2.R47H"]] <- valid_all
 
-# Tmp PCA
+# PCA
 
-meta_study <- subset(meta_load1, !is.na(genotype)) |>
-  merge(merge_validation_dfs(valid_apoe, valid_trem2))
+pc_plot <- calculate_pca(valid_all, counts, "APOE4-KI_(homo|hetero)") |>
+  rename(has_apoe = has_mutation)
 
-counts_apoe <- log2(counts[, meta_study$unique_specimenID] + 0.5)
-
-vars <- matrixStats::rowVars(as.matrix(counts_apoe[, meta_study$unique_specimenID]))
-hv <- names(sort(vars, decreasing = TRUE))[1:2000]
-
-pc <- prcomp(t(counts_apoe[hv, meta_study$unique_specimenID]))
-
-pc_plot <- merge(pc$x[, paste0("PC", 1:10)], meta_study, by.x = "row.names",
-                 by.y = "unique_specimenID") |>
-  dplyr::rename(unique_specimenID = Row.names) |>
-  mutate(
-    is_load1 = grepl("APOE4-KI_(homo|hetero)", genotype),
-    mismatch_type = case_when(
-      valid_expression & valid_variant ~ "none",
-      !valid_expression & valid_variant ~ "APOE4 expression",
-      valid_expression & !valid_variant ~ "Trem2-R47H variant",
-      !valid_expression & !valid_variant ~ "APOE4 expression + Trem2-R47H variant"
-    )
-  )
-
-# PC1 separates by sequencingBatch, PC2 separates by sex
-plt <- ggplot(pc_plot, aes(x = PC1, y = PC2, color = mismatch_type, shape = is_load1)) +
-  geom_point() + ggtitle("Jax.IU.Pitt_APOE4.Trem2.R47H")
-print(plt)
-
-plt <- ggplot(pc_plot, aes(x = PC1, y = PC2, color = specimenID %in% mismatches$specimenID, shape = sex)) +
-  geom_point() + ggtitle("Jax.IU.Pitt_APOE4.Trem2.R47H")
-print(plt)
-
-# PC3 separates by genotype
-plt <- ggplot(pc_plot, aes(x = PC2, y = PC3, color = mismatch_type, shape = is_load1)) +
-  geom_point() + ggtitle("Jax.IU.Pitt_APOE4.Trem2.R47H")
-print(plt)
-
-# PC4 somewhat separates by ageDeath
-plt <- ggplot(pc_plot, aes(x = PC2, y = PC3, color = factor(ageDeath), shape = is_load1)) +
-  geom_point() + ggtitle("Jax.IU.Pitt_APOE4.Trem2.R47H")
-print(plt)
+plot_pc_grid(pc_plot, "Jax.IU.Pitt_APOE4.Trem2.R47H", "has_apoe")
 
 # Expression plots
 
@@ -331,55 +220,19 @@ meta_load2 <- subset(metadata_all, study == "Jax.IU.Pitt_LOAD2")
 # maybe pass instead of failing?
 valid_apoe <- validate_APOE4_KI(meta_load2, counts, symbol_map)
 valid_trem2 <- validate_Trem2_R47H(meta_load2, geno_info)
-valid_hAbeta <- validate_hAbeta_KI(meta_load2, geno_info,
-                                   genotype_pattern = "hAPP-3/3_homo|hetero")
+valid_hAPP <- validate_hAPP_KI(meta_load2, geno_info)
 
 valid_all <- merge_validation_dfs(valid_apoe, valid_trem2) |>
-  merge_validation_dfs(valid_hAbeta)
+  merge_validation_dfs(valid_hAPP)
 
 valid_samples_list[["Jax.IU.Pitt_LOAD2"]] <- valid_all
 
-# Tmp PCA
+# PCA
 
-meta_study <- merge(meta_load2, valid_apoe) |>
-  merge(valid_trem2) |>
-  merge(select(valid_hAbeta, unique_specimenID, valid_variant), by = "unique_specimenID")
+pc_plot <- calculate_pca(valid_all, counts, "APOE4-KI_(homo|hetero)") |>
+  dplyr::rename(has_apoe4 = has_mutation)
 
-counts_load2 <- log2(counts[, meta_study$unique_specimenID] + 0.5)
-
-vars <- matrixStats::rowVars(as.matrix(counts_load2[, meta_study$unique_specimenID]))
-hv <- names(sort(vars, decreasing = TRUE))[1:2000]
-
-pc <- prcomp(t(counts_load2[hv, meta_study$unique_specimenID]))
-
-pc_plot <- merge(pc$x[, paste0("PC", 1:10)], meta_study, by.x = "row.names",
-                 by.y = "unique_specimenID") |>
-  dplyr::rename(unique_specimenID = Row.names) |>
-  mutate(
-    has_apoe4 = grepl("APOE4-KI_(homo|hetero)", genotype),
-    mismatch_type = case_when(
-      valid_expression & valid_variant.x & valid_variant.y ~ "none",
-      !valid_expression & valid_variant.x & valid_variant.y ~ "APOE4 expression",
-      valid_expression & !valid_variant.x & valid_variant.y ~ "Trem2-R47H variant",
-      valid_expression & valid_variant.x & !valid_variant.y ~ "hAPP variant",
-      .default = "Multiple mismatches"
-    )
-  )
-
-# PC1 separates by sequencingBatch and somewhat by ageDeath
-plt <- ggplot(pc_plot, aes(x = PC1, y = PC2, color = mismatch_type, shape = has_apoe4)) +
-  geom_point() + ggtitle("Jax.IU.Pitt_LOAD2")
-print(plt)
-
-# PC3 separates by sex -- highlight the sex mismatches
-plt <- ggplot(pc_plot, aes(x = PC2, y = PC3, color = specimenID %in% mismatches$specimenID, shape = sex)) +
-  geom_point() + ggtitle("Jax.IU.Pitt_LOAD2")
-print(plt)
-
-# PC7 separates by genotype
-plt <- ggplot(pc_plot, aes(x = PC1, y = PC7, color = mismatch_type, shape = has_apoe4)) +
-  geom_point() + ggtitle("Jax.IU.Pitt_LOAD2")
-print(plt)
+plot_pc_grid(pc_plot, "Jax.IU.Pitt_LOAD2", "has_apoe4")
 
 # Expression plots
 
@@ -401,49 +254,26 @@ meta_load2pri <- subset(metadata_all, study == "Jax.IU.Pitt_LOAD2.PrimaryScreen"
 # LOAD2 doesn't follow the same nomenclature as LOAD1 genotypes
 valid_apoe <- validate_APOE4_KI(meta_load2pri, counts, symbol_map,
                                 genotype_pattern = "LOAD2")
-valid_hAbeta <- validate_hAbeta_KI(meta_load2pri, geno_info,
-                                   genotype_pattern = "LOAD2")
+valid_hAPP <- validate_hAPP_KI(meta_load2pri, geno_info,
+                               genotype_pattern = "LOAD2")
 valid_trem2 <- validate_Trem2_R47H(meta_load2pri, geno_info,
                                    genotype_pattern = "LOAD2")
 
 valid_all <- merge_validation_dfs(valid_apoe, valid_trem2) |>
-  merge_validation_dfs(valid_hAbeta)
+  merge_validation_dfs(valid_hAPP)
 
 # TODO Il1rap, Il34, Ptprb
 
 valid_samples_list[["Jax.IU.Pitt_LOAD2.PrimaryScreen"]] <- valid_all
 
-# Tmp PCA
+# PCA
 
-meta_study <- subset(meta_load2pri, !is.na(genotype)) |>
-  merge(valid_apoe) |>
-  merge(valid_trem2) |>
-  merge(select(valid_hAbeta, unique_specimenID, valid_variant), by = "unique_specimenID")
+pc_plot <- calculate_pca(valid_all, counts, "LOAD2") |>
+  dplyr::rename(is_load2 = has_mutation)
 
-counts_load2 <- log2(counts[, meta_study$unique_specimenID] + 0.5)
+plot_pc_grid(pc_plot, "Jax.IU.Pitt_LOAD2.PrimaryScreen", "is_load2")
 
-vars <- matrixStats::rowVars(as.matrix(counts_load2))
-hv <- names(sort(vars, decreasing = TRUE))[1:2000]
-
-pc <- prcomp(t(counts_load2[hv, ]))
-
-pc_plot <- merge(pc$x[, c("PC1", "PC2")], meta_study, by.x = "row.names",
-                 by.y = "unique_specimenID") |>
-  dplyr::rename(unique_specimenID = Row.names) |>
-  mutate(
-    is_load2 = grepl("LOAD2", genotype),
-    mismatch_type = case_when(
-      # There aren't any hAbeta mismatches so it isn't accounted for here
-      valid_expression & valid_variant.x ~ "none",
-      !valid_expression & valid_variant.x ~ "APOE4 expression",
-      valid_expression & !valid_variant.x ~ "Trem2-R47H variant",
-      !valid_expression & !valid_variant.x ~ "APOE4 expression + Trem2-R47H variant"
-    )
-  )
-
-plt <- ggplot(pc_plot, aes(x = PC1, y = PC2, color = mismatch_type, shape = is_load2)) +
-  geom_point() + ggtitle("Jax.IU.Pitt_LOAD2.PrimaryScreen")
-print(plt)
+# Counts plots
 
 counts_load2 <- make_counts_df(meta_load2pri, counts, symbol_map,
                                c("APOE", "Apoe", "APP", "App", "Trem2")) |>
@@ -467,6 +297,9 @@ meta_3x <- subset(metadata_all, study == "UCI_3xTg-AD")
 valid_3x <- validate_3x(meta_3x, geno_info, counts, symbol_map)
 valid_samples_list[["UCI_3xTg-AD"]] <- valid_3x
 
+pc_plot <- calculate_pca(valid_3x, counts, "3xTg-AD_carrier")
+plot_pc_grid(pc_plot, "UCI_3xTg-AD")
+
 
 ## UCI_ABCA7 -------------------------------------------------------------------
 
@@ -478,6 +311,12 @@ valid_abca7 <- validate_Abca7(meta_abca7, geno_info)
 
 valid_all <- merge_validation_dfs(valid_5x, valid_abca7)
 valid_samples_list[["UCI_ABCA7"]] <- valid_all
+
+# PCA
+
+pc_plot <- calculate_pca(valid_all, counts, "Abca7.*_homozygous") |>
+  mutate(has_5x = grepl("5XFAD_carrier", genotype))
+plot_pc_grid(pc_plot, "UCI_ABCA7", "has_5x")
 
 # Sample 11451lh has all 6 detected variants but only expresses 11.2 CPM APP and
 # 0.5 CPM PSEN1. Its APP expression is an outlier compared to other
@@ -506,6 +345,14 @@ valid_clu <- validate_CLU_KI(meta_clu, counts, symbol_map)
 valid_all <- merge_validation_dfs(valid_5x, valid_clu)
 valid_samples_list[["UCI_Clu-h2kbKI"]] <- valid_all
 
+# PCA
+
+pc_plot <- calculate_pca(valid_all, counts, "Clu.*_homozygous") |>
+  mutate(has_5x = grepl("5XFAD_carrier", genotype))
+plot_pc_grid(pc_plot, "UCI_Clu-h2kbKI", "has_5x")
+
+# Counts
+
 counts_clu <- make_counts_df(meta_clu, counts, symbol_map,
                              c("APP", "App", "PSEN1", "Psen1", "CLU", "Clu")) |>
   merge(valid_all) |>
@@ -527,6 +374,14 @@ valid_bin1 <- validate_Bin1(meta_bin1, geno_info, counts, symbol_map)
 # No mismatches in this data set
 valid_all <- merge_validation_dfs(valid_5x, valid_bin1)
 valid_samples_list[["UCI_Bin1K358R"]] <- valid_all
+
+# PCA
+
+pc_plot <- calculate_pca(valid_all, counts, "Bin1.*_homozygous") |>
+  mutate(has_5x = grepl("5XFAD_carrier", genotype))
+plot_pc_grid(pc_plot, "UCI_Bin1K358R", "has_5x")
+
+# Counts
 
 counts_bin1 <- make_counts_df(meta_bin1, counts, symbol_map,
                               c("APP", "App", "PSEN1", "Psen1", "Bin1")) |>
@@ -551,7 +406,8 @@ ggplot(counts_bin1, aes(x = genotype, y = expr, color = genotype, shape = genoty
 # Not currently included in analysis
 
 #meta_hAbeta <- subset(metadata_all, study == "UCI_PrimaryScreen")
-#valid_hAbeta <- validate_hAbeta_KI(meta_hAbeta, geno_info)
+#valid_hAPP <- validate_hAPP(meta_hAbeta, geno_info,
+#                            genotype_pattern = "hAbeta-KI_LoxP_homozygous")
 
 
 ## UCI_PrimaryScreen - Picalm-H458R --------------------------------------------
@@ -600,6 +456,14 @@ valid_trem2_nss <- validate_Trem2_R47H(meta_trem2_nss, geno_info)
 valid_all <- merge_validation_dfs(valid_5x, valid_trem2_nss)
 valid_samples_list[["UCI_Trem2-R47H_NSS"]] <- valid_all
 
+# PCA
+
+pc_plot <- calculate_pca(valid_all, counts, "Trem2.*_homozygous") |>
+  mutate(has_5x = grepl("5XFAD_carrier", genotype))
+plot_pc_grid(pc_plot, "UCI_Trem2-R47H_NSS", "has_5x")
+
+# Counts
+
 counts_trem2 <- make_counts_df(meta_trem2_nss, counts, symbol_map,
                                c("APP", "App", "PSEN1", "Psen1", "Trem2")) |>
   merge(valid_all) |>
@@ -615,7 +479,7 @@ ggplot(counts_trem2, aes(x = genotype, y = expr, color = valid_expression, shape
 valid_samples <- lapply(valid_samples_list, select,
                         any_of(c("unique_specimenID", "valid_variant", "valid_expression"))) |>
   list_rbind() |>
-  merge(sex_matches) |>
+  merge(select(sex_matches, unique_specimenID, valid_sex)) |>
   distinct()
 
 stopifnot(nrow(valid_samples) == nrow(metadata_all))

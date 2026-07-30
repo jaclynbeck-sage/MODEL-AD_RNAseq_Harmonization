@@ -1,5 +1,19 @@
 # Printing functions -----------------------------------------------------------
 
+print_sex_mismatches <- function(xy_df) {
+  mismatches <- subset(xy_df, !valid_sex) |>
+    dplyr::rename(reported_sex = sex) |>
+    mutate(across(c(Xist, Ddx3y, Eif2s3y, Kdm5d, mean_y), ~ round(.x, 2)))
+
+  cat("*** Sex verification ***", "\n", "\n")
+
+  cat(paste(nrow(mismatches), "samples have mismatched sex:"), "\n")
+  print(select(mismatches, study, specimenID, reported_sex, est_sex,
+               Xist, Eif2s3y, Ddx3y, Kdm5d, mean_y))
+
+  cat("", "\n\n")
+}
+
 # Given a data frame of samples with genotype variant mismatches, print out this
 # information grouped by carrier/non-carrier status.
 print_variant_mismatches <- function(var_mismatches, genotype_name) {
@@ -179,7 +193,11 @@ get_variant_mismatches <- function(metadata, geno_info, genotype_pattern,
 # .x and .y columns are removed so there is only a single valid_variant and
 # valid_expression column.
 merge_validation_dfs <- function(df1, df2) {
-  merged <- merge(df1, df2, by = "unique_specimenID") |>
+  no_merge_columns <- c("valid_variant", "valid_expression", "is_carrier",
+                        "est_genotype", "total_found", "avg_quality", "evidence")
+  merged <- merge(df1, df2,
+                  by = setdiff(intersect(colnames(df1), colnames(df2)),
+                               no_merge_columns)) |>
     mutate(
       valid_variant = reduce(pick(starts_with("valid_variant")), `&`),
       valid_expression = reduce(pick(starts_with("valid_expression")), `&`)
@@ -188,7 +206,40 @@ merge_validation_dfs <- function(df1, df2) {
 }
 
 
+# Sex validation functions -----------------------------------------------------
+
+# Take the mean of several Y-chromosome genes and judge sex based on mean Y
+# expression
+validate_sex <- function(metadata, counts, symbol_map) {
+  xy_df <- make_counts_df(metadata, counts, symbol_map,
+                          c("Xist", "Eif2s3y", "Ddx3y", "Kdm5d")) |>
+    # Use a small threshold for Xist for females -- there is one sample that
+    # expresses near-zero counts of both Y-genes and Xist which should get
+    # filtered out
+    mutate(
+      # Take the geometric mean (log-scale), including a pseudocount
+      mean_y = rowMeans(log(cbind(Eif2s3y, Ddx3y, Kdm5d) + 0.5)),
+      mean_y = exp(mean_y) - 0.5,
+      # Expression of Y-related genes should be zero for females, so we use
+      # anything > 1 CPM for males and assume < 1 CPM might be noise.
+      est_sex = case_when(
+        mean_y >= 1 ~ "male",
+        Xist > 10 & mean_y < 1 ~ "female",
+        .default = "unknown"
+      ),
+      # Mark valid/invalid sex matches
+      valid_sex = (sex == est_sex)
+    )
+
+  print_sex_mismatches(xy_df)
+
+  return(xy_df)
+}
+
+
 # Genotype validation functions ------------------------------------------------
+
+## 3xTg-AD ---------------------------------------------------------------------
 
 # Validate the presence or absence of APP-SweM671L / APP-SweK670N variants, and
 # expression of human APP and MAPT in 3xTg-AD mice. The Psen1-M146V variant
@@ -229,6 +280,8 @@ validate_3x <- function(metadata, geno_calls, counts, symbol_map,
   return(final)
 }
 
+
+## 5XFAD -----------------------------------------------------------------------
 
 # Validate the presence or absence of 6 FAD mutations (4 APP, 2 PSEN1) and
 # expression of human APP and PSEN1 in 5XFAD mice.
@@ -279,6 +332,8 @@ validate_5x <- function(metadata, geno_calls, counts, symbol_map,
 }
 
 
+## APOE4-KI --------------------------------------------------------------------
+
 # Validate the presence or absence of human APOE expression in APOE4-KI mice.
 # There are no detectable variants so this is judged by expression only.
 #
@@ -311,6 +366,8 @@ validate_APOE4_KI <- function(metadata, counts, symbol_map,
 }
 
 
+## Abca7-V1599M ----------------------------------------------------------------
+
 # Validate the presence or absence of the Abca7-V1599M variant in Abca7-V1599M
 # mice. There is no noticeable difference in Abca7 gene expression between
 # genotypes for each study so we do not validate based on expression.
@@ -329,6 +386,8 @@ validate_Abca7 <- function(metadata, geno_calls,
   return(valid_variants)
 }
 
+
+## Abi3-S209F ------------------------------------------------------------------
 
 # Validate the presence or absence of the Abi3-S209F variant in Abi3-S209F mice.
 # After testing, only one carrier sample had a detected Abi3 variant. Given the
@@ -352,7 +411,11 @@ validate_Abi3 <- function(metadata, geno_calls,
 }
 
 
+## Bin1-K358R ------------------------------------------------------------------
+
 # Validate the presence or absence of the Bin1-K358R variant in Bin1-K358R mice.
+# There is no noticeable difference in expression between carriers and
+# non-carriers, so this genotype is validated by variant detection only.
 validate_Bin1 <- function(metadata, geno_calls, counts, symbol_map,
                           genotype_pattern = "Bin1-K358R_homozygous") {
   valid_variants <- get_variant_mismatches(
@@ -371,6 +434,8 @@ validate_Bin1 <- function(metadata, geno_calls, counts, symbol_map,
   return(valid_variants)
 }
 
+
+## Clu-rs2279590-KI ------------------------------------------------------------
 
 # Validate the presence or absence of human CLU expression in Clu-rs2279590 mice.
 # There are no detectable variants for this knock-in so we judge based on
@@ -394,12 +459,14 @@ validate_CLU_KI <- function(metadata, counts, symbol_map,
 }
 
 
+## hAPP-KI ---------------------------------------------------------------------
+
 # Validate the presence or absence of the App knock-in variant in hAPP or
 # hAbeta-KI mice. These mice do not express human APP, rather they have variants
 # in mouse App. There is no noticeable difference in App expression between
 # genotypes, so we do not validate by expression.
-validate_hAbeta_KI <- function(metadata, geno_calls,
-                               genotype_pattern = "hAbeta-KI_LoxP_homozygous") {
+validate_hAPP_KI <- function(metadata, geno_calls,
+                             genotype_pattern = "hAPP-3/3_homo|hetero") {
   valid_variants <- get_variant_mismatches(metadata, geno_calls,
                                            genotype_pattern = genotype_pattern,
                                            mutation_match = "App-KI",
@@ -413,10 +480,7 @@ validate_hAbeta_KI <- function(metadata, geno_calls,
 }
 
 
-validate_Picalm <- function() {
- # TODO
-}
-
+## Trem2-KO --------------------------------------------------------------------
 
 # Validate the presence or absence of Trem2 KO by expression of Trem2.
 validate_Trem2_KO <- function(metadata, counts, symbol_map) {
@@ -434,6 +498,8 @@ validate_Trem2_KO <- function(metadata, counts, symbol_map) {
   return(counts_df)
 }
 
+
+## Trem2-R47H ------------------------------------------------------------------
 
 # Validate the presence or absence of Trem2-R47H variants in Trem2-R47H mice.
 # This function works for both _NSS and _CSS variants. There is no clear cutoff
