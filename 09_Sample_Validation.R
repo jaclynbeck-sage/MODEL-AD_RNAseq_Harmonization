@@ -30,7 +30,8 @@ meta_list <- meta_list[studies] |>
 
 # Combine into one data frame and bin the continuous ageDeath values in Jax studies
 metadata_all <- do.call(rbind, meta_list) |>
-  bin_jax_ages()
+  bin_jax_ages() |>
+  mutate(genotype_short = shorten_genotypes(genotype))
 
 symbol_map_file <- synGet(file_syn_ids$symbol_map,
                           downloadLocation = tmp_dir,
@@ -118,20 +119,7 @@ names(valid_samples_list) <- unique(metadata_all$study)
 # Validation of mouse sex ------------------------------------------------------
 
 sex_matches <- validate_sex(metadata_all, counts, symbol_map)
-
-# Linear scale
-ggplot(sex_matches, aes(x = Xist, y = mean_y, color = sex)) +
-  geom_point() +
-  geom_hline(yintercept = 1, linewidth = 0.5, color = "orange") +
-  theme_bw() +
-  facet_wrap(~study)
-
-# Log scale - Adding pseudocount to avoid inf values
-ggplot(sex_matches, aes(x = log2(Xist+0.5), y = log2(mean_y+0.5), color = sex)) +
-  geom_point() +
-  geom_hline(yintercept = log2(1.5), linewidth = 0.5, color = "orange") +
-  theme_bw() +
-  facet_wrap(~study)
+plot_sex_expression(sex_matches)
 
 # NOTE:
 # The two Jax.IU.Pitt_LOAD2.PrimaryScreen samples that fail (both female) have a
@@ -159,13 +147,17 @@ valid_5x <- validate_5x(meta_5x, geno_info, counts, symbol_map)
 valid_samples_list[["Jax.IU.Pitt_5XFAD"]] <- subset(valid_5x, study == "Jax.IU.Pitt_5XFAD")
 valid_samples_list[["UCI_5XFAD"]] <- subset(valid_5x, study == "UCI_5XFAD")
 
-# PCA
+# PCA and expression plots
 for (study_name in unique(meta_5x$study)) {
-  pc_plot <- calculate_pca(subset(valid_5x, study == study_name), counts,
-                           "5XFAD_carrier") |>
+  pc_df <- calculate_pca(subset(valid_5x, study == study_name),
+                         counts,
+                         "5XFAD_carrier") |>
     dplyr::rename(has_5x = has_mutation)
 
-  plot_pc_grid(pc_plot, study_name, "has_5x")
+  plot_pc_grid(pc_df, study_name, "has_5x")
+
+  plot_expression_grid(pc_df, counts, symbol_map, c("APP", "PSEN1"),
+                       shape_var = "has_5x")
 }
 
 # NOTE: GT19_12887 (non-carrier) from Jax 5X study has all 6 variants detected
@@ -188,23 +180,15 @@ valid_all <- merge_validation_dfs(valid_apoe, valid_trem2)
 
 valid_samples_list[["Jax.IU.Pitt_APOE4.Trem2.R47H"]] <- valid_all
 
-# PCA
+# PCA and expression plots
 
-pc_plot <- calculate_pca(valid_all, counts, "APOE4-KI_(homo|hetero)") |>
+pc_df <- calculate_pca(valid_all, counts, "APOE4-KI_(homo|hetero)") |>
   rename(has_apoe = has_mutation)
 
-plot_pc_grid(pc_plot, "Jax.IU.Pitt_APOE4.Trem2.R47H", "has_apoe")
+plot_pc_grid(pc_df, "Jax.IU.Pitt_APOE4.Trem2.R47H", "has_apoe")
 
-# Expression plots
-
-counts_load1 <- make_counts_df(meta_load1, counts, symbol_map,
-                               c("APOE", "Apoe", "Trem2")) |>
-  merge(valid_all) |>
-  tidyr::pivot_longer(c(APOE, Apoe, Trem2), names_to = "gene", values_to = "expr")
-
-ggplot(counts_load1, aes(x = genotype, y = expr, color = valid_expression, shape = genotype)) +
-  geom_jitter() +
-  facet_grid(rows = vars(gene), cols = vars(ageDeath), scales = "free")
+plot_expression_grid(pc_df, counts, symbol_map, c("APOE", "Apoe", "Trem2"),
+                     shape_var = "has_apoe")
 
 
 ## Jax.IU.Pitt_LOAD2 -----------------------------------------------------------
@@ -227,23 +211,16 @@ valid_all <- merge_validation_dfs(valid_apoe, valid_trem2) |>
 
 valid_samples_list[["Jax.IU.Pitt_LOAD2"]] <- valid_all
 
-# PCA
+# PCA and expression plots
 
-pc_plot <- calculate_pca(valid_all, counts, "APOE4-KI_(homo|hetero)") |>
+pc_df <- calculate_pca(valid_all, counts, "APOE4-KI_(homo|hetero)") |>
   dplyr::rename(has_apoe4 = has_mutation)
 
-plot_pc_grid(pc_plot, "Jax.IU.Pitt_LOAD2", "has_apoe4")
+plot_pc_grid(pc_df, "Jax.IU.Pitt_LOAD2", "has_apoe4")
 
-# Expression plots
-
-counts_load2 <- make_counts_df(meta_load2, counts, symbol_map,
-                               c("APOE", "Apoe", "APP", "App", "Trem2")) |>
-  merge(valid_all) |>
-  tidyr::pivot_longer(c(APOE, Apoe, APP, App, Trem2), names_to = "gene", values_to = "expr")
-
-ggplot(counts_load2, aes(x = genotype, y = expr, color = valid_expression, shape = genotype)) +
-  geom_jitter() +
-  facet_grid(rows = vars(gene), cols = vars(ageDeath), scales = "free")
+plot_expression_grid(pc_df, counts, symbol_map,
+                     c("App", "APOE", "Apoe", "Trem2"),
+                     shape_var = "has_apoe4")
 
 
 ## Jax.IU.Pitt_LOAD2.PrimaryScreen ---------------------------------------------
@@ -266,23 +243,16 @@ valid_all <- merge_validation_dfs(valid_apoe, valid_trem2) |>
 
 valid_samples_list[["Jax.IU.Pitt_LOAD2.PrimaryScreen"]] <- valid_all
 
-# PCA
+# PCA and expression plots
 
-pc_plot <- calculate_pca(valid_all, counts, "LOAD2") |>
+pc_df <- calculate_pca(valid_all, counts, "LOAD2") |>
   dplyr::rename(is_load2 = has_mutation)
 
-plot_pc_grid(pc_plot, "Jax.IU.Pitt_LOAD2.PrimaryScreen", "is_load2")
+plot_pc_grid(pc_df, "Jax.IU.Pitt_LOAD2.PrimaryScreen", "is_load2")
 
-# Counts plots
-
-counts_load2 <- make_counts_df(meta_load2pri, counts, symbol_map,
-                               c("APOE", "Apoe", "APP", "App", "Trem2")) |>
-  merge(valid_all) |>
-  tidyr::pivot_longer(c(APOE, Apoe, APP, App, Trem2), names_to = "gene", values_to = "expr")
-
-ggplot(counts_load2, aes(x = genotype, y = expr, color = valid_expression)) +
-  geom_jitter() +
-  facet_grid(rows = vars(gene), cols = vars(ageDeath), scales = "free")
+plot_expression_grid(pc_df, counts, symbol_map,
+                     c("App", "APOE", "Apoe", "Trem2"),
+                     shape_var = "is_load2")
 
 # TODO The three non-carrier samples that express a small amount of APOE express
 # Apoe and Trem2 at levels comparable to other non-carriers. Should they pass
@@ -297,8 +267,12 @@ meta_3x <- subset(metadata_all, study == "UCI_3xTg-AD")
 valid_3x <- validate_3x(meta_3x, geno_info, counts, symbol_map)
 valid_samples_list[["UCI_3xTg-AD"]] <- valid_3x
 
-pc_plot <- calculate_pca(valid_3x, counts, "3xTg-AD_carrier")
-plot_pc_grid(pc_plot, "UCI_3xTg-AD")
+pc_df <- calculate_pca(valid_3x, counts, "3xTg-AD_carrier") |>
+  dplyr::rename(has_3x = has_mutation)
+plot_pc_grid(pc_df, "UCI_3xTg-AD", "has_3x")
+
+plot_expression_grid(pc_df, counts, symbol_map, c("APP", "App", "MAPT"),
+                     shape_var = "has_3x")
 
 
 ## UCI_ABCA7 -------------------------------------------------------------------
@@ -312,25 +286,21 @@ valid_abca7 <- validate_Abca7(meta_abca7, geno_info)
 valid_all <- merge_validation_dfs(valid_5x, valid_abca7)
 valid_samples_list[["UCI_ABCA7"]] <- valid_all
 
-# PCA
+# PCA and expression plots
 
-pc_plot <- calculate_pca(valid_all, counts, "Abca7.*_homozygous") |>
-  mutate(has_5x = grepl("5XFAD_carrier", genotype))
-plot_pc_grid(pc_plot, "UCI_ABCA7", "has_5x")
+pc_df <- calculate_pca(valid_all, counts, "Abca7.*_homozygous") |>
+  mutate(has_5x = grepl("5XFAD_carrier", genotype)) |>
+  dplyr::rename(has_abca7 = has_mutation)
+plot_pc_grid(pc_df, "UCI_ABCA7", c("has_5x", "has_abca7"))
+
+plot_expression_grid(pc_df, counts, symbol_map,
+                     c("APP", "App", "Abca7", "PSEN1"),
+                     shape_var = "has_abca7")
 
 # Sample 11451lh has all 6 detected variants but only expresses 11.2 CPM APP and
 # 0.5 CPM PSEN1. Its APP expression is an outlier compared to other
 # 5XFAD_noncarriers but not nearly high enough to suggest the actual 5XFAD
 # genotype. To be cautious, this sample is dropped.
-
-counts_abca7 <- make_counts_df(meta_abca7, counts, symbol_map,
-                               c("APP", "App", "PSEN1", "Psen1", "Abca7")) |>
-  merge(valid_all) |>
-  tidyr::pivot_longer(c(APP, App, PSEN1, Psen1, Abca7), names_to = "gene", values_to = "expr")
-
-ggplot(counts_abca7, aes(x = genotype, y = expr, color = valid_expression, shape = genotype)) +
-  geom_jitter() +
-  facet_wrap(~gene, scales = "free")
 
 
 ## UCI_Clu-h2kbKI --------------------------------------------------------------
@@ -345,22 +315,16 @@ valid_clu <- validate_CLU_KI(meta_clu, counts, symbol_map)
 valid_all <- merge_validation_dfs(valid_5x, valid_clu)
 valid_samples_list[["UCI_Clu-h2kbKI"]] <- valid_all
 
-# PCA
+# PCA and expression plots
 
-pc_plot <- calculate_pca(valid_all, counts, "Clu.*_homozygous") |>
-  mutate(has_5x = grepl("5XFAD_carrier", genotype))
-plot_pc_grid(pc_plot, "UCI_Clu-h2kbKI", "has_5x")
+pc_df <- calculate_pca(valid_all, counts, "Clu.*_homozygous") |>
+  mutate(has_5x = grepl("5XFAD_carrier", genotype)) |>
+  dplyr::rename(has_clu = has_mutation)
+plot_pc_grid(pc_df, "UCI_Clu-h2kbKI", c("has_5x", "has_clu"))
 
-# Counts
-
-counts_clu <- make_counts_df(meta_clu, counts, symbol_map,
-                             c("APP", "App", "PSEN1", "Psen1", "CLU", "Clu")) |>
-  merge(valid_all) |>
-  tidyr::pivot_longer(c(APP, App, PSEN1, Psen1, CLU, Clu), names_to = "gene", values_to = "expr")
-
-ggplot(counts_clu, aes(x = genotype, y = expr, color = genotype, shape = genotype)) +
-  geom_jitter() +
-  facet_wrap(~gene, scales = "free")
+plot_expression_grid(pc_df, counts, symbol_map,
+                     c("APP", "App", "CLU", "Clu", "PSEN1"),
+                     shape_var = "has_clu")
 
 
 ## UCI_Bin1K358R ---------------------------------------------------------------
@@ -375,22 +339,16 @@ valid_bin1 <- validate_Bin1(meta_bin1, geno_info, counts, symbol_map)
 valid_all <- merge_validation_dfs(valid_5x, valid_bin1)
 valid_samples_list[["UCI_Bin1K358R"]] <- valid_all
 
-# PCA
+# PCA and expression plots
 
-pc_plot <- calculate_pca(valid_all, counts, "Bin1.*_homozygous") |>
-  mutate(has_5x = grepl("5XFAD_carrier", genotype))
-plot_pc_grid(pc_plot, "UCI_Bin1K358R", "has_5x")
+pc_df <- calculate_pca(valid_all, counts, "Bin1.*_homozygous") |>
+  mutate(has_5x = grepl("5XFAD_carrier", genotype)) |>
+  dplyr::rename(has_bin1 = has_mutation)
+plot_pc_grid(pc_df, "UCI_Bin1K358R", c("has_5x", "has_bin1"))
 
-# Counts
-
-counts_bin1 <- make_counts_df(meta_bin1, counts, symbol_map,
-                              c("APP", "App", "PSEN1", "Psen1", "Bin1")) |>
-  merge(valid_all) |>
-  tidyr::pivot_longer(c(APP, App, PSEN1, Psen1, Bin1), names_to = "gene", values_to = "expr")
-
-ggplot(counts_bin1, aes(x = genotype, y = expr, color = genotype, shape = genotype)) +
-  geom_jitter() +
-  facet_wrap(~gene, scales = "free")
+plot_expression_grid(pc_df, counts, symbol_map,
+                     c("APP", "App", "Bin1", "PSEN1"),
+                     shape_var = "has_bin1")
 
 
 ## UCI_PrimaryScreen - Abi3-S209F ----------------------------------------------
@@ -456,22 +414,16 @@ valid_trem2_nss <- validate_Trem2_R47H(meta_trem2_nss, geno_info)
 valid_all <- merge_validation_dfs(valid_5x, valid_trem2_nss)
 valid_samples_list[["UCI_Trem2-R47H_NSS"]] <- valid_all
 
-# PCA
+# PCA and expression plots
 
-pc_plot <- calculate_pca(valid_all, counts, "Trem2.*_homozygous") |>
-  mutate(has_5x = grepl("5XFAD_carrier", genotype))
-plot_pc_grid(pc_plot, "UCI_Trem2-R47H_NSS", "has_5x")
+pc_df <- calculate_pca(valid_all, counts, "Trem2.*_homozygous") |>
+  mutate(has_5x = grepl("5XFAD_carrier", genotype)) |>
+  dplyr::rename(has_trem2 = has_mutation)
+plot_pc_grid(pc_df, "UCI_Trem2-R47H_NSS", c("has_5x", "has_trem2"))
 
-# Counts
-
-counts_trem2 <- make_counts_df(meta_trem2_nss, counts, symbol_map,
-                               c("APP", "App", "PSEN1", "Psen1", "Trem2")) |>
-  merge(valid_all) |>
-  tidyr::pivot_longer(c(APP, App, PSEN1, Psen1, Trem2), names_to = "gene", values_to = "expr")
-
-ggplot(counts_trem2, aes(x = genotype, y = expr, color = valid_expression, shape = genotype)) +
-  geom_jitter() +
-  facet_wrap(~gene, scales = "free")
+plot_expression_grid(pc_df, counts, symbol_map,
+                     c("APP", "App", "PSEN1", "Trem2"),
+                     shape_var = "has_trem2")
 
 
 # Combine all validation results -----------------------------------------------

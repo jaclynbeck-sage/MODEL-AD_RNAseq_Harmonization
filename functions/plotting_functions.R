@@ -52,7 +52,62 @@ calculate_pca <- function(validation_df, counts, carrier_regex) {
 }
 
 
+# Shorten genotype names for display. "genotype" should be a column from a
+# data frame.
+shorten_genotypes <- function(genotype) {
+  geno_short <- genotype |>
+    str_replace_all("_homozygous", "") |>
+    str_replace_all("_heterozygous", "_het") |>
+    str_replace_all("_carrier", "") |>
+    str_replace_all("_KI/KI", "") |>
+    str_replace_all("LOAD2\\..*WT", "LOAD2")
+
+  geno_short <- case_match(
+    geno_short,
+    "3xTg-AD_noncarrier" ~ "B6129",
+    "5XFAD_noncarrier" ~ "C57BL6J",
+    "APOE4-KI; Trem2-R47H" ~ "LOAD1",
+    "APOE4-KI; Trem2-R47H_WT" ~ "APOE4-KI",
+    "APOE4-KI_WT; Trem2-R47H" ~ "Trem2-R47H",
+    "APOE4-KI_WT; Trem2-R47H_WT" ~ "C57BL6J",
+    "APOE4-KI_WT; Trem2-R47H_WT; hAPP-3/3_WT" ~ "C57BL6J",
+    "APOE4-KI; Trem2-R47H; hAPP-3/3_het" ~ "LOAD1_hAPP-3/3_het",
+    "APOE4-KI; Trem2-R47H; hAPP-3/3" ~ "LOAD2",
+    "APOE4-KI; Trem2-R47H; hAPP-3/3_WT" ~ "LOAD1",
+    .default = geno_short
+  )
+
+  return(geno_short)
+}
+
+
 # Plotting ---------------------------------------------------------------------
+
+# Plot the expression of Xist vs the mean expression of several Y genes for
+# every study. It is assumed that `sex_matches_df` has a column of booleans
+# called `valid_sex`.
+plot_sex_expression <- function(sex_matches_df) {
+  # Linear scale
+  plt <- ggplot(sex_matches_df, aes(x = Xist, y = mean_y,
+                                    color = valid_sex, shape = sex)) +
+    geom_point(size = 1) +
+    geom_hline(yintercept = 1, linewidth = 0.5, color = "orange") +
+    theme_bw() +
+    facet_wrap(~study, scales = "free") +
+    ggtitle("Sex-related expression (CPM)")
+  print(plt)
+
+  # Log scale - Adding pseudocount to avoid inf values
+  plt <- ggplot(sex_matches_df, aes(x = log2(Xist+0.5), y = log2(mean_y+0.5),
+                                    color = valid_sex, shape = sex)) +
+    geom_point(size = 1) +
+    geom_hline(yintercept = log2(1.5), linewidth = 0.5, color = "orange") +
+    theme_bw() +
+    facet_wrap(~study, scales = "free") +
+    ggtitle("Sex-related expression (log2-CPM)")
+  print(plt)
+}
+
 
 # Given a data frame with PCA values and metadata, plot a grid of PCs vs
 # covariates. Only (PC, covariate) pairs with > 0.5 correlation are plotted.
@@ -61,7 +116,8 @@ calculate_pca <- function(validation_df, counts, carrier_regex) {
 # TODO consider doing 1 PC per column or per row for easier parsing
 plot_pc_grid <- function(pc_plot, study_name, extra_vars = c()) {
   pc_sub <- pc_plot |>
-    select(PC1:PC10, sex:sequencingBatch, -RIN,
+    select(PC1:PC10, sex:sequencingBatch, -RIN, -genotypeBackground,
+           -genotype, genotype_short, # use genotype_short instead of genotype
            any_of(c("has_mutation", extra_vars))) |>
     mutate(ageDeath = paste(ageDeath, "months"))
 
@@ -89,7 +145,7 @@ plot_pc_grid <- function(pc_plot, study_name, extra_vars = c()) {
     pc <- pair[[1]]
     covariate <- pair[[2]]
     plt <- ggplot(pc_sub, aes(x = .data[[pc]], y = .data[[covariate]], color = .data[[covariate]])) +
-      geom_jitter() +
+      geom_jitter(width = 0.25) +
       theme_bw() +
       theme(legend.position = "none")
 
@@ -97,5 +153,31 @@ plot_pc_grid <- function(pc_plot, study_name, extra_vars = c()) {
     free(plt, type = "label")
   })
 
-  print(wrap_plots(plt_list) + plot_annotation(title = study_name))
+  plt <- wrap_plots(plt_list) +
+    plot_annotation(title = paste(study_name, "- PCA vs Covariates"))
+  print(plt)
+}
+
+
+# Plots a grid of ageDeath vs expression of a set of genes.
+# `gene_symbols` is a vector of the gene symbols to graph expression for.
+# `color_var` and `shape_var` should be columns that exist in `metadata`
+plot_expression_grid <- function(metadata, counts, symbol_map, gene_symbols,
+                                 color_var = "valid_expression",
+                                 shape_var = "has_mutation") {
+  counts_df <- make_counts_df(metadata, counts, symbol_map, gene_symbols) |>
+    tidyr::pivot_longer(cols = all_of(gene_symbols),
+                        names_to = "gene",
+                        values_to = "expr") |>
+    mutate(ageDeath = paste(ageDeath, "months"))
+
+  plt <- ggplot(counts_df, aes(x = genotype_short, y = expr,
+                               color = .data[[color_var]],
+                               shape = .data[[shape_var]])) +
+    geom_jitter(width = 0.25) +
+    theme_bw() +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
+    facet_grid(rows = vars(gene), cols = vars(ageDeath), scales = "free") +
+    ggtitle(paste(unique(metadata$study), "- Gene Expression (CPM)"))
+  print(plt)
 }

@@ -91,7 +91,8 @@ make_counts_df <- function(metadata, counts, symbol_map, genes) {
   rownames(counts_sub) <- genes_sub[rownames(counts_sub), "gene_symbol"]
 
   counts_df <- as.data.frame(t(counts_sub)) |>
-    merge(metadata, by.x = "row.names", by.y = "unique_specimenID") |>
+    merge(select(metadata, -any_of(genes)),
+          by.x = "row.names", by.y = "unique_specimenID") |>
     dplyr::rename(unique_specimenID = Row.names)
 }
 
